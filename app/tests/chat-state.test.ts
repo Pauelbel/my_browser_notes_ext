@@ -64,3 +64,13 @@ test('deleted текущего чата очищает экран', () => {
   assert.deepEqual(applyEvent(inChat, {type: 'deleted', conversationId: 'c1'}), emptyChat);
   assert.deepEqual(applyEvent(inChat, {type: 'deleted', conversationId: 'c2'}), inChat);
 });
+
+test('step добавляет и обновляет шаг текущего сообщения', () => {
+  const step = {id: 's1', name: 'snapshot' as const, input: '', status: 'running' as const, summary: ''};
+  let s = applyEvent(inChat, {type: 'step', conversationId: 'c1', messageId: 'a', step});
+  assert.deepEqual(s.messages[1].steps, [step]);
+  s = applyEvent(s, {type: 'step', conversationId: 'c1', messageId: 'a', step: {...step, status: 'done', summary: 'ок'}});
+  assert.equal(s.messages[1].steps?.length, 1);
+  assert.equal(s.messages[1].steps?.[0].status, 'done');
+  assert.deepEqual(applyEvent(inChat, {type: 'step', conversationId: 'c2', messageId: 'a', step}), inChat);
+});

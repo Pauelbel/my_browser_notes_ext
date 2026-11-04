@@ -55,6 +55,7 @@ export function initChat(client: Client): ChatView {
       node.className = `msg ${message.role}`;
       if (message.role === 'assistant') {
         node.innerHTML = '<details class="reasoning" hidden><summary>Рассуждения</summary><div class="reasoning-text"></div></details>'
+          + '<details class="steps" hidden><summary></summary><div class="steps-list"></div></details>'
           + '<div class="md"></div><div class="msg-status"></div><div class="msg-error" hidden></div>';
       }
       nodes.set(message.id, node);
@@ -67,9 +68,21 @@ export function initChat(client: Client): ChatView {
     const reasoning = node.querySelector<HTMLDetailsElement>('.reasoning')!;
     reasoning.hidden = !message.reasoning;
     node.querySelector('.reasoning-text')!.textContent = message.reasoning;
+    const steps = node.querySelector<HTMLDetailsElement>('.steps')!;
+    const list = message.steps ?? [];
+    steps.hidden = !list.length;
+    steps.querySelector('summary')!.textContent = list.map(s => `${s.name}${s.input ? ` ${s.input}` : ''}`).join(' · ');
+    steps.classList.toggle('has-error', list.some(s => s.status === 'error'));
+    steps.querySelector('.steps-list')!.replaceChildren(...list.map(s => {
+      const line = document.createElement('div');
+      line.className = `step ${s.status}`;
+      line.textContent = `${s.status === 'running' ? '…' : s.status === 'error' ? '✕' : '✓'} ${s.name}${s.input ? ` ${s.input}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;
+      return line;
+    }));
     node.querySelector('.md')!.innerHTML = renderMarkdown(message.text);
     const status = node.querySelector('.msg-status')!;
-    status.textContent = message.status === 'streaming' ? (message.text ? '' : 'печатает…') : STATUS_TEXT[message.status] ?? '';
+    const running = message.steps?.find(s => s.status === 'running');
+    status.textContent = message.status === 'streaming' ? (running ? `смотрю страницу: ${running.name}…` : message.text ? '' : 'печатает…') : STATUS_TEXT[message.status] ?? '';
     node.classList.toggle('streaming', message.status === 'streaming');
     const error = node.querySelector<HTMLElement>('.msg-error')!;
     error.hidden = message.status !== 'failed';
@@ -134,7 +147,17 @@ export function initChat(client: Client): ChatView {
 
   // ——— Sending ———
 
-  function submit(): void {
+  /** The active tab of this panel's window: the page the read tools look at. */
+  async function activeTab(): Promise<number | null> {
+    try {
+      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+      return tab?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function submit(): Promise<void> {
     if (state.running && state.conversationId) {
       client.post({type: 'stop', conversationId: state.conversationId});
       return;
@@ -143,14 +166,14 @@ export function initChat(client: Client): ChatView {
     if (!text || state.pendingRequestId) return;
     const requestId = crypto.randomUUID();
     state = {...state, pendingRequestId: requestId};
-    client.post({type: 'send', requestId, conversationId: state.conversationId, text, profileId: profileSelect.value});
     input.value = '';
     render();
+    client.post({type: 'send', requestId, conversationId: state.conversationId, text, profileId: profileSelect.value, tabId: await activeTab()});
   }
 
-  $('composer').addEventListener('submit', event => { event.preventDefault(); submit(); });
+  $('composer').addEventListener('submit', event => { event.preventDefault(); void submit(); });
   input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!state.running) submit(); }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!state.running) void submit(); }
   });
 
   // ——— Opening and outside changes ———

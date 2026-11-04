@@ -238,6 +238,16 @@ function applyEvent(state, event) {
     case "finished":
       if (event.conversationId !== state.conversationId) return state;
       return { ...state, messages: upsert(state.messages, event.message), running: false };
+    case "step": {
+      if (event.conversationId !== state.conversationId) return state;
+      const message = state.messages.find((m) => m.id === event.messageId);
+      if (!message) return state;
+      const steps = [...message.steps ?? []];
+      const index = steps.findIndex((s) => s.id === event.step.id);
+      if (index === -1) steps.push(event.step);
+      else steps[index] = event.step;
+      return { ...state, messages: upsert(state.messages, { ...message, steps }) };
+    }
     case "busy":
       return event.requestId === state.pendingRequestId ? { ...state, pendingRequestId: null } : state;
   }
@@ -3873,7 +3883,7 @@ function initChat(client2) {
       node = document.createElement("div");
       node.className = `msg ${message.role}`;
       if (message.role === "assistant") {
-        node.innerHTML = '<details class="reasoning" hidden><summary>\u0420\u0430\u0441\u0441\u0443\u0436\u0434\u0435\u043D\u0438\u044F</summary><div class="reasoning-text"></div></details><div class="md"></div><div class="msg-status"></div><div class="msg-error" hidden></div>';
+        node.innerHTML = '<details class="reasoning" hidden><summary>\u0420\u0430\u0441\u0441\u0443\u0436\u0434\u0435\u043D\u0438\u044F</summary><div class="reasoning-text"></div></details><details class="steps" hidden><summary></summary><div class="steps-list"></div></details><div class="md"></div><div class="msg-status"></div><div class="msg-error" hidden></div>';
       }
       nodes.set(message.id, node);
     }
@@ -3887,9 +3897,21 @@ function initChat(client2) {
     const reasoning = node.querySelector(".reasoning");
     reasoning.hidden = !message.reasoning;
     node.querySelector(".reasoning-text").textContent = message.reasoning;
+    const steps = node.querySelector(".steps");
+    const list = message.steps ?? [];
+    steps.hidden = !list.length;
+    steps.querySelector("summary").textContent = list.map((s) => `${s.name}${s.input ? ` ${s.input}` : ""}`).join(" \xB7 ");
+    steps.classList.toggle("has-error", list.some((s) => s.status === "error"));
+    steps.querySelector(".steps-list").replaceChildren(...list.map((s) => {
+      const line = document.createElement("div");
+      line.className = `step ${s.status}`;
+      line.textContent = `${s.status === "running" ? "\u2026" : s.status === "error" ? "\u2715" : "\u2713"} ${s.name}${s.input ? ` ${s.input}` : ""}${s.summary ? ` \u2014 ${s.summary}` : ""}`;
+      return line;
+    }));
     node.querySelector(".md").innerHTML = renderMarkdown(message.text);
     const status = node.querySelector(".msg-status");
-    status.textContent = message.status === "streaming" ? message.text ? "" : "\u043F\u0435\u0447\u0430\u0442\u0430\u0435\u0442\u2026" : STATUS_TEXT[message.status] ?? "";
+    const running2 = message.steps?.find((s) => s.status === "running");
+    status.textContent = message.status === "streaming" ? running2 ? `\u0441\u043C\u043E\u0442\u0440\u044E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443: ${running2.name}\u2026` : message.text ? "" : "\u043F\u0435\u0447\u0430\u0442\u0430\u0435\u0442\u2026" : STATUS_TEXT[message.status] ?? "";
     node.classList.toggle("streaming", message.status === "streaming");
     const error = node.querySelector(".msg-error");
     error.hidden = message.status !== "failed";
@@ -3956,7 +3978,15 @@ function initChat(client2) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.settings) void loadModels();
   });
-  function submit() {
+  async function activeTab() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      return tab?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+  async function submit() {
     if (state.running && state.conversationId) {
       client2.post({ type: "stop", conversationId: state.conversationId });
       return;
@@ -3965,18 +3995,18 @@ function initChat(client2) {
     if (!text2 || state.pendingRequestId) return;
     const requestId = crypto.randomUUID();
     state = { ...state, pendingRequestId: requestId };
-    client2.post({ type: "send", requestId, conversationId: state.conversationId, text: text2, profileId: profileSelect.value });
     input.value = "";
     render();
+    client2.post({ type: "send", requestId, conversationId: state.conversationId, text: text2, profileId: profileSelect.value, tabId: await activeTab() });
   }
   $2("composer").addEventListener("submit", (event) => {
     event.preventDefault();
-    submit();
+    void submit();
   });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      if (!state.running) submit();
+      if (!state.running) void submit();
     }
   });
   async function open(conversationId) {

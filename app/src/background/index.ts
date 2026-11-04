@@ -4,6 +4,8 @@ import {openAssistantDb, markInterrupted} from '../store/assistant-db.ts';
 import {getSettings} from '../store/settings.ts';
 import {ollamaStream} from '../llm/stream.ts';
 import {ChatRunner} from './chat-runner.ts';
+import {acquire, release, PageTools, pageBudget} from '../page/index.ts';
+import {modelContext} from '../llm/ollama.ts';
 
 chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true}).catch(console.error);
 
@@ -12,6 +14,13 @@ const emit = (event: WorkerToPanel) => { for (const port of ports) port.postMess
 const runner = new ChatRunner({
   stream: ollamaStream, settings: () => getSettings(), emit,
   heartbeat: () => { void chrome.runtime.getPlatformInfo(); },
+  // The debugger attaches only for a reply that reads the page, and detaches when that reply ends.
+  page: async tabId => {
+    const settings = await getSettings();
+    const [session, context] = await Promise.all([acquire(tabId), modelContext(settings.ollamaUrl, settings.model)]);
+    const tools = new PageTools(session, {budget: pageBudget(context)});
+    return {tools, release: async () => { tools.dispose(); await release(session); }};
+  },
 });
 
 // A worker that starts has no replies in progress: any left `streaming` belonged to a worker that was stopped.

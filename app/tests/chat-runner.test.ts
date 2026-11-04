@@ -256,3 +256,81 @@ test('delete до начала ответа не даёт started и не пиш
   assert.deepEqual(await db.listMessages(conversation.id), []);
   assert.deepEqual(chat.running(), []);
 });
+
+/** A page whose tools answer fixed text, counting how often it is opened and released. */
+function fakePage(text = 'Тестовая страница · http://x\n<<<page-content>>>\nbutton "Ок"\n<<<end-page-content>>>') {
+  const counts = {opened: 0, released: 0};
+  const page = async (_tabId: number) => {
+    counts.opened++;
+    const answer = async () => ({ok: true, text});
+    return {tools: {snapshot: answer, find: answer, read: answer} as any, release: async () => { counts.released++; }};
+  };
+  return {page, counts};
+}
+
+/** A model that calls the snapshot tool through the tool set it was given, then answers. */
+function toolCallingModel(answer = 'На странице кнопка «Ок».') {
+  const calls: Parameters<StreamReply>[0][] = [];
+  const stream: StreamReply = async function* (request) {
+    calls.push(request);
+    yield {type: 'tool-call', id: 't1', name: 'snapshot', input: {}};
+    const output = await (request.tools!.snapshot as any).execute({}, {toolCallId: 't1', messages: []});
+    yield {type: 'tool-result', id: 't1', ok: !String(output).startsWith('ошибка'), summary: String(output).split('\n')[0]};
+    yield {type: 'text', delta: answer};
+  };
+  return {stream, calls};
+}
+
+test('шаги инструментов сохраняются', async () => {
+  const model = toolCallingModel();
+  const {page, counts} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream: model.stream, settings: async () => SETTINGS, emit: e => events.push(e), page});
+  await chat.send({...send('что на странице?'), tabId: 5});
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.equal(finished.message.status, 'done');
+  assert.equal(finished.message.steps?.length, 1);
+  assert.equal(finished.message.steps?.[0].status, 'done');
+  assert.equal(events.filter(e => e.type === 'step').length, 2);
+  assert.equal(model.calls[0].maxSteps, 5);
+  assert.deepEqual(Object.keys(model.calls[0].tools ?? {}).sort(), ['find', 'read', 'snapshot']);
+  assert.equal(counts.opened, 1);
+  const stored = await db.listMessages(finished.conversationId);
+  assert.equal(stored[1].steps?.[0].name, 'snapshot');
+});
+
+test('ошибка инструмента не роняет ответ', async () => {
+  const model = toolCallingModel('Не смог прочитать страницу.');
+  const {page} = fakePage('ошибка DETACHED: Отладка отключена пользователем.');
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream: model.stream, settings: async () => SETTINGS, emit: e => events.push(e), page});
+  await chat.send({...send('что на странице?'), tabId: 5});
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.equal(finished.message.status, 'done');
+  assert.equal(finished.message.steps?.[0].status, 'error');
+});
+
+test('сессия страницы отпускается после ответа и после ошибки модели', async () => {
+  const {page, counts} = fakePage();
+  const ok = new ChatRunner({stream: toolCallingModel().stream, settings: async () => SETTINGS, emit: () => {}, page});
+  await ok.send({...send('раз'), tabId: 5});
+  assert.equal(counts.released, 1);
+  const failing: StreamReply = async function* (request) {
+    await (request.tools!.snapshot as any).execute({}, {toolCallId: 't', messages: []});
+    throw new TypeError('Failed to fetch');
+  };
+  const bad = new ChatRunner({stream: failing, settings: async () => SETTINGS, emit: () => {}, page});
+  await bad.send({...send('два', {requestId: 'r2'}), tabId: 5});
+  assert.equal(counts.released, 2);
+});
+
+test('без tabId инструменты не открывают страницу', async () => {
+  const model = toolCallingModel();
+  const {page, counts} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream: model.stream, settings: async () => SETTINGS, emit: e => events.push(e), page});
+  await chat.send({...send('что на странице?'), tabId: null});
+  assert.equal(counts.opened, 0);
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.equal(finished.message.steps?.[0].status, 'error');
+});

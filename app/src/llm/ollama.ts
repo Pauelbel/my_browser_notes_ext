@@ -58,3 +58,10 @@ export function describeError(error: unknown, baseUrl: string): string {
   }
   return message;
 }
+
+/** The context window the model runs with: from /api/ps when it is loaded, else a conservative 8192. */
+export async function modelContext(baseUrl: string, model: string, fetchFn: typeof fetch = fetch): Promise<number> {
+  const running = await getJson(`${baseUrl}/api/ps`, fetchFn).catch(() => null);
+  const loaded = running?.models?.find((m: {name: string}) => m.name === model);
+  return Number(loaded?.context_length) || 8192;
+}

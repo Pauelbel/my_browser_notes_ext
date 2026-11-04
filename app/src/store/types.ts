@@ -24,6 +24,17 @@ export interface Conversation {
   updatedAt: number;
 }
 
+/** A tool call the model made while answering, as shown in the panel. */
+export interface ToolStep {
+  id: string;
+  name: ToolName;
+  /** The arguments in a few words, for display. */
+  input: string;
+  status: 'running' | 'done' | 'error';
+  /** The first line of the result, or the error. */
+  summary: string;
+}
+
 export type MessageStatus = 'streaming' | 'done' | 'stopped' | 'failed' | 'interrupted';
 
 export interface Message {
@@ -36,6 +47,7 @@ export interface Message {
   status: MessageStatus;
   error?: string;
   model?: string;
+  steps?: ToolStep[];
   createdAt: number;
 }
 

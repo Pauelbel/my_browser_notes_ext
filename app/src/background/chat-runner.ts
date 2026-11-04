@@ -2,11 +2,17 @@
 // as it grows, so closing the panel does not lose it and a worker that stops leaves a reply marked as interrupted.
 import type {PanelToWorker, WorkerToPanel} from '../shared/protocol.ts';
 import type {StreamReply} from '../llm/stream.ts';
-import type {Message, Settings} from '../store/types.ts';
+import type {Message, Settings, ToolName, ToolStep} from '../store/types.ts';
 import {createConversation, deleteConversation, getConversation, listMessages, listProfiles, putMessage, setConversationProfile} from '../store/assistant-db.ts';
 import {systemPrompt} from '../agent/prompt.ts';
 import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
+import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
+
+/** Model turns in one Chat-mode reply, tool calls included. */
+export const CHAT_MAX_STEPS = 5;
+
+export interface PageHandle { tools: ReadTools; release(): Promise<void> }
 
 export interface ChatDeps {
   stream: StreamReply;
@@ -21,6 +27,8 @@ export interface ChatDeps {
    */
   heartbeat?: () => void;
   heartbeatMs?: number;
+  /** Opens the page tools for a tab; without it the model gets no page tools. */
+  page?: (tabId: number) => Promise<PageHandle>;
 }
 
 interface Run {
@@ -124,14 +132,41 @@ export class ChatRunner {
       return conversation.id;
     }
 
-    const reply = {...assistant};
+    const reply: Message = {...assistant, steps: []};
     const saveEvery = this.#deps.saveEveryMs ?? 500;
     let savedAt = now();
+    // The page is opened on the first tool call and released when the reply ends, whatever way it ends.
+    let handle: Promise<PageHandle> | null = null;
+    const openPage = (): Promise<ReadTools> => {
+      const tabId = command.tabId;
+      if (!this.#deps.page) return Promise.resolve(unavailable('Инструменты страницы недоступны.'));
+      if (tabId === null || tabId === undefined) return Promise.resolve(unavailable('Нет открытой вкладки рядом с панелью.'));
+      handle ??= this.#deps.page(tabId);
+      return handle.then(h => h.tools, error => unavailable(error instanceof Error ? error.message : String(error)));
+    };
+    const tools = this.#deps.page ? buildChatTools(profile, openPage) : {};
+    const toolNames = Object.keys(tools) as ToolName[];
+    const emitStep = (step: ToolStep) => this.#deps.emit({type: 'step', conversationId: reply.conversationId, messageId: reply.id, step});
     try {
       const parts = this.#deps.stream({
-        settings, system: systemPrompt(profile), messages: toModelMessages([...history, user]), signal: run.controller.signal,
+        settings, system: systemPrompt(profile, toolNames), messages: toModelMessages([...history, user]), signal: run.controller.signal,
+        tools, maxSteps: CHAT_MAX_STEPS,
       });
       for await (const part of parts) {
+        if (part.type === 'tool-call') {
+          const step: ToolStep = {id: part.id, name: part.name as ToolName, input: describeInput(part.input), status: 'running', summary: ''};
+          reply.steps!.push(step);
+          emitStep(step);
+          continue;
+        }
+        if (part.type === 'tool-result') {
+          const index = reply.steps!.findIndex(s => s.id === part.id);
+          if (index >= 0) {
+            reply.steps![index] = {...reply.steps![index], status: part.ok ? 'done' : 'error', summary: part.summary};
+            emitStep(reply.steps![index]);
+          }
+          continue;
+        }
         if (part.type === 'text') reply.text += part.delta; else reply.reasoning += part.delta;
         this.#deps.emit({type: 'delta', conversationId: reply.conversationId, messageId: reply.id, text: reply.text, reasoning: reply.reasoning});
         if (now() - savedAt >= saveEvery && !run.deleted) {
@@ -143,7 +178,10 @@ export class ChatRunner {
     } catch (error) {
       if (run.controller.signal.aborted) reply.status = 'stopped';
       else { reply.status = 'failed'; reply.error = describeError(error, settings.ollamaUrl); }
+    } finally {
+      if (handle) await (handle as Promise<PageHandle>).then(h => h.release(), () => {});
     }
+    if (!reply.steps!.length) delete reply.steps;
     await this.#finish(run, reply);
     return conversation.id;
   }
@@ -153,4 +191,10 @@ export class ChatRunner {
     await putMessage(message);
     this.#deps.emit({type: 'finished', conversationId: message.conversationId, message});
   }
+}
+
+/** Read tools that answer every call with the same error, when the page cannot be opened. */
+function unavailable(reason: string): ReadTools {
+  const answer = async () => ({ok: false, text: `ошибка NO_PAGE: ${reason}`});
+  return {snapshot: answer, find: answer, read: answer};
 }

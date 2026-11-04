@@ -260,3 +260,11 @@ dialog code { font: 11px var(--mono); background: var(--soft); padding: 0 3px; b
 #profileTools h4 { margin: 6px 0 2px; font-size: 12px; }
 #profileTools label { display: inline-flex; align-items: center; gap: 4px; width: 50%; font-size: 12px; padding: 1px 0; }
 #profileTools input[type="checkbox"] { display: inline; width: auto; margin: 0; accent-color: var(--accent); }
+
+/* Tool steps of a reply */
+.steps { margin-bottom: 6px; color: var(--muted); font: 11px/1.5 var(--mono); }
+.steps summary { cursor: pointer; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps.has-error summary { color: var(--danger); }
+.steps-list { padding: 4px 0 0 12px; border-left: 2px solid var(--line); margin-top: 4px; }
+.step { white-space: pre-wrap; overflow-wrap: anywhere; }
+.step.error { color: var(--danger); }

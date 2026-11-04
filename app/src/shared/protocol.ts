@@ -1,10 +1,11 @@
 // Messages between the panel and the service worker over the `assistant` runtime port.
-import type {Conversation, Message} from '../store/types.ts';
+import type {Conversation, Message, ToolStep} from '../store/types.ts';
 
 export const PORT_NAME = 'assistant';
 
 export type PanelToWorker =
-  | {type: 'send'; requestId: string; conversationId: string | null; text: string; profileId: string}
+  /** `tabId` is the active tab of the panel's window: the page the read tools look at. */
+  | {type: 'send'; requestId: string; conversationId: string | null; text: string; profileId: string; tabId?: number | null}
   | {type: 'stop'; conversationId: string}
   | {type: 'delete'; conversationId: string};
 
@@ -15,4 +16,5 @@ export type WorkerToPanel =
   | {type: 'delta'; conversationId: string; messageId: string; text: string; reasoning: string}
   | {type: 'finished'; conversationId: string; message: Message}
   | {type: 'busy'; requestId: string; conversationId: string}
+  | {type: 'step'; conversationId: string; messageId: string; step: ToolStep}
   | {type: 'deleted'; conversationId: string};

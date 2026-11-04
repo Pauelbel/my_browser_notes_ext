@@ -52,6 +52,15 @@ export function applyEvent(state: ChatState, event: WorkerToPanel): ChatState {
     case 'finished':
       if (event.conversationId !== state.conversationId) return state;
       return {...state, messages: upsert(state.messages, event.message), running: false};
+    case 'step': {
+      if (event.conversationId !== state.conversationId) return state;
+      const message = state.messages.find(m => m.id === event.messageId);
+      if (!message) return state;
+      const steps = [...(message.steps ?? [])];
+      const index = steps.findIndex(s => s.id === event.step.id);
+      if (index === -1) steps.push(event.step); else steps[index] = event.step;
+      return {...state, messages: upsert(state.messages, {...message, steps})};
+    }
     case 'busy':
       return event.requestId === state.pendingRequestId ? {...state, pendingRequestId: null} : state;
   }
