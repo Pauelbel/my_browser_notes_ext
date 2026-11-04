@@ -1087,6 +1087,230 @@ async function waitActionable(session, target, needs, probes) {
   }
 }
 
+// src/page/evidence.ts
+var POLL_MS2 = 100;
+var CAP_MS = 1500;
+var QUIET_MS = 500;
+var NAVIGATION_LOAD_MS = 5e3;
+function classifyEvidence(s) {
+  if (s.dialog) return "dialog";
+  if (s.newTab) return "new_tab";
+  if (s.navigated) return "navigated";
+  if (s.mutations > 0) return "changed";
+  if (s.requests > 0) return "requests";
+  return "none";
+}
+async function startWatch(session, probes, frameIds) {
+  const frames = [.../* @__PURE__ */ new Set([session.frames.main().frameId, ...frameIds])];
+  const readMutations = async () => {
+    let sum = 0;
+    for (const id of frames) sum += await probeEval(session, id, probes, "__assistant.mutations()").catch(() => 0);
+    return sum;
+  };
+  const baseMutations = await readMutations();
+  const mainId = session.frames.main().frameId;
+  let requests = 0, lastSignal = Date.now(), navigated = false, loaded = false, newTabUrl, navUrl;
+  const pending = /* @__PURE__ */ new Set();
+  const off = session.cdp.on((method, params, sessionId) => {
+    const key = `${sessionId ?? ""}|${params.requestId}`;
+    if (method === "Network.requestWillBeSent" && params.type !== "EventSource") {
+      requests++;
+      pending.add(key);
+      lastSignal = Date.now();
+    } else if ((method === "Network.loadingFinished" || method === "Network.loadingFailed") && pending.delete(key)) lastSignal = Date.now();
+    else if (method === "Page.windowOpen") {
+      newTabUrl = params.url;
+      lastSignal = Date.now();
+    } else if (!sessionId && method === "Page.frameRequestedNavigation" && params.frameId === mainId) {
+      navigated = true;
+      navUrl = params.url;
+      lastSignal = Date.now();
+    } else if (!sessionId && method === "Page.frameNavigated" && !params.frame.parentId) {
+      navigated = true;
+      navUrl = params.frame.url;
+      lastSignal = Date.now();
+    } else if (!sessionId && method === "Page.navigatedWithinDocument" && params.frameId === mainId) {
+      navigated = true;
+      navUrl = params.url;
+      lastSignal = Date.now();
+    } else if (!sessionId && method === "Page.loadEventFired") loaded = true;
+  });
+  return {
+    stop: off,
+    async settle(dialog) {
+      const started = Date.now();
+      let mutations = 0;
+      for (; ; ) {
+        await new Promise((r) => setTimeout(r, POLL_MS2));
+        const d = dialog();
+        if (d) {
+          off();
+          return { effect: "dialog", dialog: d, requests, mutations };
+        }
+        if (!navigated) {
+          const now = await readMutations();
+          if (now - baseMutations !== mutations) {
+            mutations = Math.max(0, now - baseMutations);
+            lastSignal = Date.now();
+          }
+        }
+        const elapsed = Date.now() - started;
+        if (navigated) {
+          if (loaded || elapsed > NAVIGATION_LOAD_MS) break;
+          continue;
+        }
+        if (elapsed >= CAP_MS || Date.now() - lastSignal >= QUIET_MS && pending.size === 0) break;
+      }
+      off();
+      const effect = classifyEvidence({ dialog: false, newTab: Boolean(newTabUrl), navigated, mutations, requests });
+      return { effect, url: effect === "new_tab" ? newTabUrl : effect === "navigated" ? navUrl : void 0, requests, mutations };
+    }
+  };
+}
+
+// src/page/input.ts
+function watchDialog(session) {
+  let info;
+  let resolve;
+  const opened = new Promise((r) => {
+    resolve = r;
+  });
+  const off = session.cdp.on((method, params) => {
+    if (method === "Page.javascriptDialogOpening" && !info) {
+      info = { type: params.type, message: params.message };
+      resolve(info);
+    }
+  });
+  return { opened, current: () => info, off };
+}
+async function sendRaced(session, method, params, dialog) {
+  const command = session.cdp.send(method, params);
+  command.catch(() => {
+  });
+  return Promise.race([command.then(() => ({})), dialog.then((d) => ({ dialog: d }))]);
+}
+async function click(session, point, dialog, count = 1) {
+  const base = { x: point.x, y: point.y, button: "left" };
+  const moved = await sendRaced(session, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y }, dialog);
+  if (moved.dialog) return moved;
+  for (let clickCount = 1; clickCount <= count; clickCount++) {
+    const pressed = await sendRaced(session, "Input.dispatchMouseEvent", { ...base, type: "mousePressed", clickCount }, dialog);
+    if (pressed.dialog) return pressed;
+    const released = await sendRaced(session, "Input.dispatchMouseEvent", { ...base, type: "mouseReleased", clickCount }, dialog);
+    if (released.dialog) return released;
+  }
+  return {};
+}
+function hover(session, point) {
+  return session.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+}
+function wheel(session, point, deltaY) {
+  return session.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY });
+}
+var KEYS = {
+  Enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+  Tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  Escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  Backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  ArrowUp: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  ArrowDown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  Space: { key: " ", code: "Space", keyCode: 32, text: " " },
+  PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  PageUp: { key: "PageUp", code: "PageUp", keyCode: 33 }
+};
+async function pressKey(session, name, dialog) {
+  const k = KEYS[name];
+  const common = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode };
+  const down = await sendRaced(session, "Input.dispatchKeyEvent", { ...common, type: k.text ? "keyDown" : "rawKeyDown", text: k.text, unmodifiedText: k.text }, dialog);
+  if (down.dialog) return down;
+  return sendRaced(session, "Input.dispatchKeyEvent", { ...common, type: "keyUp" }, dialog);
+}
+function insertText(session, text) {
+  return session.cdp.send("Input.insertText", { text });
+}
+
+// src/page/act.ts
+var focused = (session, t) => callOn(
+  session,
+  t.frame,
+  t.objectId,
+  "function () { const f = __assistant.focusInfo(); return f === this || (f && this.contains(f)); }"
+);
+async function focusTarget(session, t, point, dialog) {
+  await session.cdp.send("DOM.focus", { backendNodeId: t.record.backendNodeId }, t.frame.sessionId).catch(() => {
+  });
+  if (await focused(session, t)) return;
+  await click(session, point, dialog);
+  if (!await focused(session, t)) throw new PageError("NOT_EDITABLE", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u043A\u0443\u0440\u0441\u043E\u0440 \u0432 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${t.record.ref}.`, true);
+}
+async function typeInto(session, t, text, clear, dialog) {
+  if (clear) {
+    await callOn(session, t.frame, t.objectId, `function () {
+      if (typeof this.select === 'function') { this.select(); return; }
+      const r = document.createRange(); r.selectNodeContents(this); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    }`);
+    if (!text) await pressKey(session, "Backspace", dialog);
+  } else {
+    await callOn(session, t.frame, t.objectId, 'function () { if (typeof this.setSelectionRange === "function" && typeof this.value === "string") this.setSelectionRange(this.value.length, this.value.length); }').catch(() => {
+    });
+  }
+  if (text) await insertText(session, text);
+  const value = await callOn(session, t.frame, t.objectId, 'function () { return typeof this.value === "string" ? this.value : this.innerText; }');
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  const ok = clear ? norm(value) === norm(text) : norm(value).endsWith(norm(text));
+  if (!ok) throw new PageError("VALUE_MISMATCH", `\u041F\u043E\u0441\u043B\u0435 \u0432\u0432\u043E\u0434\u0430 \u0432 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0435 ${t.record.ref} \u043E\u043A\u0430\u0437\u0430\u043B\u043E\u0441\u044C \u043D\u0435 \u0442\u043E \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 (\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043C\u043E\u0433\u043B\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0438\u043B\u0438 \u043E\u0433\u0440\u0430\u043D\u0438\u0447\u0438\u0442\u044C \u0432\u0432\u043E\u0434).`, true);
+}
+async function selectOption(session, t, value) {
+  const r = await callOn(session, t.frame, t.objectId, `function (v) {
+    const opts = [...this.options]; const want = String(v).trim().toLowerCase();
+    const o = opts.find(o => o.text.trim().toLowerCase() === want) || opts.find(o => o.value.toLowerCase() === want)
+      || opts.find(o => o.text.trim().toLowerCase().includes(want));
+    if (!o) return {ok: false, options: opts.map(o => o.text.trim())};
+    this.value = o.value;
+    this.dispatchEvent(new Event('input', {bubbles: true}));
+    this.dispatchEvent(new Event('change', {bubbles: true}));
+    return {ok: true, text: o.text.trim()};
+  }`, [{ value }]);
+  if (!r.ok) throw new PageError("NOT_FOUND", `\u0412 \u0441\u043F\u0438\u0441\u043A\u0435 ${t.record.ref} \u043D\u0435\u0442 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u0430 \xAB${value}\xBB. \u0415\u0441\u0442\u044C: ${r.options.slice(0, 30).join(", ")}.`);
+  return r.text;
+}
+var isChecked = (session, t) => callOn(
+  session,
+  t.frame,
+  t.objectId,
+  'function () { const c = this.control || this; return typeof c.checked === "boolean" ? c.checked : c.getAttribute("aria-checked") === "true"; }'
+);
+var isSelect = (session, t) => callOn(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');
+
+// src/page/diff.ts
+function diffLines(prev, next) {
+  const a = prev.map((l) => l.trim()), b = next.map((l) => l.trim());
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i2 = a.length - 1; i2 >= 0; i2--) for (let j2 = b.length - 1; j2 >= 0; j2--) {
+    dp[i2][j2] = a[i2] === b[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+  }
+  const added = [], removed = [];
+  let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) removed.push(a[i++]);
+    else added.push(b[j++]);
+  }
+  while (i < a.length) removed.push(a[i++]);
+  while (j < b.length) added.push(b[j++]);
+  return { added, removed };
+}
+function renderDiff(d, max = 30) {
+  const count = d.added.length + d.removed.length;
+  if (count === 0) return "";
+  if (count > max) return `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0441\u0438\u043B\u044C\u043D\u043E \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${count} \u0441\u0442\u0440\u043E\u043A), \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot`;
+  return [...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n");
+}
+
 // src/page/tools.ts
 var PAGE_START = "<<<page-content>>>";
 var PAGE_END = "<<<end-page-content>>>";
@@ -1105,17 +1329,28 @@ var PageTools = class {
   refs;
   observer;
   budget;
+  /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
+  dialog;
   constructor(session, options) {
     this.session = session;
     this.budget = options.budget;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
+    session.cdp.on((method) => {
+      if (method === "Page.javascriptDialogClosed") this.dialog = void 0;
+    });
+    session.cdp.on((method, params) => {
+      if (method === "Page.javascriptDialogOpening") this.dialog = { type: params.type, message: params.message };
+    });
     session.frames.onChange(() => {
       for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId);
     });
   }
-  async run(fn) {
+  async run(fn, allowDuringDialog = false) {
     try {
+      if (this.dialog && !allowDuringDialog) {
+        throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u043E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E \u0447\u0435\u0440\u0435\u0437 handle_dialog.`);
+      }
       return { ok: true, text: await fn() };
     } catch (error) {
       return errorResult(error);
@@ -1138,6 +1373,138 @@ var PageTools = class {
       const r = await this.observer.read({ ref: args.ref, budget: this.budget });
       return pageText(r.header, r.body, r.notices);
     });
+  }
+  /** The page around the screen as full lines (text included), for the diff in a receipt. */
+  async #describe() {
+    const { capture: capture2, roots } = await this.observer.observe();
+    return render(roots, this.refs, { mode: "all", window: "near", budget: this.budget, viewport: capture2.viewport }).body.split("\n");
+  }
+  /**
+   * One action on one label: resolve, check, watch, dispatch, settle, describe again. Retries happen only before
+   * dispatch; after it, a failure says the event was sent.
+   */
+  async #act(verb, ref, needs, dispatch) {
+    const before = await this.#describe();
+    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    const actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    return this.#dispatchAndReport(
+      `${verb} [${ref}] ${target.record.role} "${target.record.name}"`,
+      before,
+      [target.frame.frameId],
+      (dialog) => dispatch(target, actionable, dialog),
+      target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : ""
+    );
+  }
+  async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "") {
+    const watch = await startWatch(this.session, this.observer.probes, frameIds);
+    const dialog = watchDialog(this.session);
+    let note = "";
+    try {
+      const result = await dispatch(dialog.opened);
+      note = result?.note ?? "";
+    } catch (error) {
+      watch.stop();
+      dialog.off();
+      if (error instanceof PageError && error.delivered === false) error.delivered = "unknown";
+      throw error;
+    }
+    const evidence = await watch.settle(() => dialog.current());
+    dialog.off();
+    return `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${await this.#effectText(evidence, before)}`;
+  }
+  async #effectText(e, before) {
+    const counts = `\u043C\u0443\u0442\u0430\u0446\u0438\u0439 ${e.mutations}, \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 ${e.requests}`;
+    if (e.effect === "dialog") {
+      this.dialog = e.dialog;
+      return `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${e.dialog.type}: \xAB${e.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+    }
+    if (e.effect === "new_tab") return `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u043E\u0432\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${e.url ?? ""}`.trim();
+    if (e.effect === "navigated") {
+      const o = await this.observer.snapshot({ budget: this.budget });
+      return `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.url ?? o.capture.url}
+\u043D\u043E\u0432\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430: ${o.header}
+\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`;
+    }
+    const diff = renderDiff(diffLines(before, await this.#describe()));
+    const head = e.effect === "changed" ? `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${counts})` : e.effect === "requests" ? `\u0443\u0448\u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${e.requests}), \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C` : "\u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0440\u0435\u0430\u043A\u0446\u0438\u0438 \u043D\u0435\u0442";
+    return diff ? `${head}
+\u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F:
+${diff}` : head;
+  }
+  click(args) {
+    return this.run(() => this.#act("click", args.ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog)));
+  }
+  hover(args) {
+    return this.run(() => this.#act("hover", args.ref, { pointer: true }, async (_t, a) => {
+      await hover(this.session, a.point);
+    }));
+  }
+  type(args) {
+    return this.run(() => this.#act("type", args.ref, { pointer: false, editable: true }, async (t, a, dialog) => {
+      await focusTarget(this.session, t, a.point, dialog);
+      await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
+      if (args.submit) {
+        const r = await pressKey(this.session, "Enter", dialog);
+        if (r.dialog) return r;
+      }
+      return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
+    }));
+  }
+  set(args) {
+    return this.run(async () => {
+      const probe = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      if (await isSelect(this.session, probe)) {
+        return this.#act("set", args.ref, { pointer: false }, async (t) => ({ note: `\u0432\u044B\u0431\u0440\u0430\u043D\u043E \xAB${await selectOption(this.session, t, String(args.value))}\xBB` }));
+      }
+      const want = args.value === true || args.value === "true" || args.value === "on";
+      return this.#act("set", args.ref, { pointer: true }, async (t, a, dialog) => {
+        if (await isChecked(this.session, t) === want) return { note: `\u0443\u0436\u0435 ${want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E"}` };
+        const r = await click(this.session, a.point, dialog);
+        if (r.dialog) return r;
+        if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${args.ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
+        return { note: want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E" };
+      });
+    });
+  }
+  press(args) {
+    return this.run(async () => {
+      if (!(args.key in KEYS)) throw new PageError("NOT_FOUND", `\u041A\u043B\u0430\u0432\u0438\u0448\u0430 ${args.key} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(KEYS).join(", ")}.`);
+      if (args.ref) {
+        return this.#act(`press ${args.key}`, args.ref, { pointer: false }, async (t, _a, dialog) => {
+          await this.session.cdp.send("DOM.focus", { backendNodeId: t.record.backendNodeId }, t.frame.sessionId).catch(() => {
+          });
+          return pressKey(this.session, args.key, dialog);
+        });
+      }
+      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog));
+    });
+  }
+  scroll(args) {
+    return this.run(async () => {
+      const { capture: capture2 } = await this.observer.observe();
+      const delta = Math.round(capture2.viewport.height * (args.amount === "half" ? 0.5 : 0.85)) * (args.direction === "up" ? -1 : 1);
+      let point = { x: capture2.viewport.width / 2, y: capture2.viewport.height / 2 };
+      let what = `scroll ${args.direction}`;
+      if (args.ref) {
+        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        point = (await waitActionable(this.session, target, { pointer: false }, this.observer.probes)).point;
+        what += ` \u0432 [${args.ref}]`;
+      }
+      await wheel(this.session, point, delta);
+      await new Promise((r) => setTimeout(r, 400));
+      const o = await this.observer.snapshot({ budget: this.budget });
+      return `${what}: \u043F\u0440\u043E\u043A\u0440\u0443\u0447\u0435\u043D\u043E \xB7 ${o.header}`;
+    });
+  }
+  handleDialog(args) {
+    return this.run(async () => {
+      if (!this.dialog) throw new PageError("NOT_FOUND", "\u0421\u0435\u0439\u0447\u0430\u0441 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043D\u0435\u0442 \u0434\u0438\u0430\u043B\u043E\u0433\u0430.");
+      const was = this.dialog;
+      await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
+      this.dialog = void 0;
+      await new Promise((r) => setTimeout(r, 300));
+      return `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
+    }, true);
   }
   /** For the e2e harness: runs the checks before an action on a label, without acting. */
   async debugActionable(ref) {
