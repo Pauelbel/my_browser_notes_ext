@@ -14,23 +14,8 @@
     <button id="toggleSidebar" data-icon="menu" data-tip="Показать/скрыть список" aria-label="Показать/скрыть список"></button>
     <button id="newNote" data-icon="notePlus" data-tip="Новая заметка" aria-label="Новая заметка"></button>
     <button id="newFolder" data-icon="folderPlus" data-tip="Новая папка" aria-label="Новая папка"></button>
-    <button id="deleteNote" data-icon="trash" data-tip="Удалить заметку" aria-label="Удалить заметку"></button>
   </div>
-  <div class="tb-format" aria-label="Форматирование">
-    <button data-cmd="bold" data-icon="bold" data-tip="Жирный (Ctrl+B)" aria-label="Жирный"></button>
-    <button data-cmd="italic" data-icon="italic" data-tip="Курсив (Ctrl+I)" aria-label="Курсив"></button>
-    <button data-cmd="heading" data-icon="heading" data-tip="Заголовок" aria-label="Заголовок"></button>
-    <button data-cmd="bulletList" data-icon="bulletList" data-tip="Список" aria-label="Список"></button>
-    <button data-cmd="orderedList" data-icon="orderedList" data-tip="Нумерованный список" aria-label="Нумерованный список"></button>
-    <button data-cmd="taskList" data-icon="taskList" data-tip="Задачи" aria-label="Задачи"></button>
-    <button data-cmd="blockquote" data-icon="quote" data-tip="Цитата" aria-label="Цитата"></button>
-    <button data-cmd="codeBlock" data-icon="code" data-tip="Код" aria-label="Код"></button>
-    <button id="insertTable" data-icon="table" data-tip="Таблица" aria-label="Таблица" aria-haspopup="true" aria-expanded="false"></button>
-    <button id="insertImage" data-icon="image" data-tip="Картинка" aria-label="Картинка"></button>
-    <button data-cmd="clear" data-icon="clear" data-tip="Убрать форматирование" aria-label="Убрать форматирование"></button>
-    <button data-cmd="undo" data-icon="undo" data-tip="Отменить (Ctrl+Z)" aria-label="Отменить"></button>
-    <button data-cmd="redo" data-icon="redo" data-tip="Повторить (Ctrl+Shift+Z)" aria-label="Повторить"></button>
-  </div>
+  <div class="tb-spacer"></div>
   <div class="tb-right">
     <button id="themeToggle" data-icon="moon" data-tip="Тёмная тема" aria-label="Переключить тему"></button>
     <button id="openSettings" data-icon="settings" data-tip="Настройки" aria-label="Настройки"></button>
@@ -48,22 +33,43 @@
   <main id="note" hidden>
     <input id="title" placeholder="Без названия" aria-label="Название" autocomplete="off">
     <div id="meta">
-      <span id="path"></span>
-      <span class="sep">·</span>
-      <span id="tags"></span>
-      <span class="tag-add">
-        <button id="addTag" data-tip="Добавить тег" aria-label="Добавить тег">＋</button>
-        <input id="tagInput" placeholder="тег" aria-label="Новый тег" autocomplete="off" hidden>
-        <span id="tagSuggest" class="popover" role="listbox" hidden></span>
+      <span class="meta-item" data-tip="Папка"><span data-icon="folder"></span><span id="path"></span></span>
+      <span class="meta-item tags-item"><span data-icon="tag" data-tip="Теги"></span><span id="tags"></span>
+        <span class="tag-add">
+          <button id="addTag" aria-label="Добавить тег">＋ тег</button>
+          <input id="tagInput" placeholder="новый тег" aria-label="Новый тег" autocomplete="off" hidden>
+          <span id="tagSuggest" class="popover" role="listbox" hidden></span>
+        </span>
       </span>
-      <span class="sep">·</span>
-      <span id="saveState" role="status" aria-live="polite"></span>
     </div>
-    <div id="editor"></div>
+    <div id="format" role="toolbar" aria-label="Форматирование">
+      <button data-cmd="bold" data-icon="bold" data-tip="Жирный (Ctrl+B)" aria-label="Жирный"></button>
+      <button data-cmd="italic" data-icon="italic" data-tip="Курсив (Ctrl+I)" aria-label="Курсив"></button>
+      <button data-cmd="heading" data-icon="heading" data-tip="Заголовок" aria-label="Заголовок"></button>
+      <span class="fsep"></span>
+      <button data-cmd="bulletList" data-icon="bulletList" data-tip="Список" aria-label="Список"></button>
+      <button data-cmd="orderedList" data-icon="orderedList" data-tip="Нумерованный список" aria-label="Нумерованный список"></button>
+      <button data-cmd="taskList" data-icon="taskList" data-tip="Задачи" aria-label="Задачи"></button>
+      <button data-cmd="blockquote" data-icon="quote" data-tip="Цитата" aria-label="Цитата"></button>
+      <span class="fsep"></span>
+      <button data-cmd="codeBlock" data-icon="code" data-tip="Код" aria-label="Код"></button>
+      <button id="insertTable" data-icon="table" data-tip="Таблица" aria-label="Таблица" aria-haspopup="true" aria-expanded="false"></button>
+      <button id="insertImage" data-icon="image" data-tip="Картинка" aria-label="Картинка"></button>
+      <span class="fsep"></span>
+      <button data-cmd="clear" data-icon="clear" data-tip="Убрать форматирование" aria-label="Убрать форматирование"></button>
+      <span class="fsep"></span>
+      <button data-cmd="undo" data-icon="undo" data-tip="Отменить (Ctrl+Z)" aria-label="Отменить"></button>
+      <button data-cmd="redo" data-icon="redo" data-tip="Повторить (Ctrl+Shift+Z)" aria-label="Повторить"></button>
+    </div>
+    <div id="scroll"><div id="editor"></div></div>
+    <footer id="footer"><span id="footPath"></span><span id="saveState" role="status" aria-live="polite"></span></footer>
   </main>
   <div id="empty" hidden><p>Нет заметок.<br>Создайте первую — ＋ сверху.</p></div>
 </div>
 
+<div id="noteMenu" class="popover menu" role="menu" hidden>
+  <button data-action="delete" role="menuitem" class="danger">Удалить</button>
+</div>
 <div id="treeMenu" class="popover menu" role="menu" hidden>
   <button data-action="note" role="menuitem">Новая заметка здесь</button>
   <button data-action="folder" role="menuitem">Новая подпапка</button>

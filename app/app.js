@@ -7,6 +7,7 @@ import {icons} from './icons.js';
 const $ = id => document.getElementById(id);
 const el = (tag, className = '', text = '') => { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; };
 const time = value => new Intl.DateTimeFormat('ru', {hour:'2-digit', minute:'2-digit'}).format(value);
+const stamp = value => { const d = new Date(value), pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const narrow = matchMedia('(max-width: 559px)');
 const darkScheme = matchMedia('(prefers-color-scheme: dark)');
 const inPanel = new URLSearchParams(location.search).get('view') === 'panel';
@@ -21,11 +22,13 @@ let bodyDirty = false;       // editor changed since the body was last read (get
 let timer = null;
 let chain = Promise.resolve();
 let drag = null;
+let selectedFolder = null;  // folder picked in the tree: new notes and folders go there
 let sidebarOpen = true;
 const openFolders = new Set(pref('open', []));
 
 const snapshot = note => JSON.stringify([note.title, note.body, note.tags, note.folderId]);
 const dirty = () => Boolean(current) && (timer !== null || bodyDirty || snapshot(current) !== lastSaved);
+const targetFolder = () => data.folders.some(f => f.id === selectedFolder) ? selectedFolder : current?.folderId ?? null;
 
 // Saves and destructive actions run one at a time, in order, so a late save cannot resurrect a deleted note.
 function queue(fn) { const run = chain.then(fn); chain = run.catch(() => {}); return run; }
@@ -47,7 +50,7 @@ function place(popover, rect, align = 'left') {
   popover.style.left = `${x / z}px`; popover.style.top = `${y / z}px`;
 }
 function closePopovers() {
-  $('treeMenu').hidden = true; $('tablePicker').hidden = true;
+  $('treeMenu').hidden = true; $('noteMenu').hidden = true; $('tablePicker').hidden = true;
   $('insertTable').setAttribute('aria-expanded', 'false');
   document.querySelectorAll('.t-more[aria-expanded="true"]').forEach(button => button.setAttribute('aria-expanded', 'false'));
 }
@@ -85,7 +88,7 @@ $('promptInput').addEventListener('keydown', event => { if (event.key === 'Enter
 function setSaveState(state, detail = '') {
   const node = $('saveState');
   node.dataset.state = state;
-  node.textContent = state === 'pending' ? '…' : state === 'error' ? '! не сохранено' : `✓ ${time(detail)}`;
+  node.textContent = state === 'pending' ? 'сохранение…' : state === 'error' ? '! не сохранено' : `изменено: ${stamp(detail)}`;
   if (state === 'error') node.dataset.tip = detail; else delete node.dataset.tip;
 }
 function schedule() {
@@ -162,6 +165,7 @@ function flatNotes() {
   return result;
 }
 async function openNote(id) {
+  selectedFolder = null;
   await save();
   const note = data.notes.find(n => n.id === id);
   if (note) showNote(note);
@@ -172,6 +176,7 @@ async function newNote(folderId) {
   await save();
   const note = await createNote(folderId);
   data.notes.push(note);
+  selectedFolder = null;
   reveal(folderId);
   showNote(note); renderTree();
   if (narrow.matches) setSidebar(false);
@@ -185,6 +190,22 @@ async function newFolder(parentId) {
   reveal(parentId); renderTree();
 }
 
+async function removeNote(id) {
+  const note = data.notes.find(n => n.id === id);
+  if (!note || !await confirmDelete(`Удалить заметку «${noteTitle(note)}» навсегда?`)) return;
+  await queue(async () => {
+    const order = flatNotes(), index = order.findIndex(n => n.id === id), open = current?.id === id;
+    if (open) { clearTimeout(timer); timer = null; current = null; }
+    await deleteNote(id);
+    data.notes = data.notes.filter(n => n.id !== id);
+    if (!open) return;
+    // The open note is gone: show its neighbour in the tree.
+    const next = order[index + 1] || order[index - 1];
+    next ? showNote(data.notes.find(n => n.id === next.id)) : showEmpty();
+  });
+  renderTree();
+}
+
 $('title').addEventListener('input', () => { if (current) { current.title = $('title').value; schedule(); } });
 $('title').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); editor.focus(); } });
 
@@ -192,7 +213,9 @@ $('title').addEventListener('keydown', event => { if (event.key === 'Enter') { e
 
 function renderMeta() {
   if (!current) return;
-  $('path').textContent = folderPath(data.folders, current.folderId).join(' › ') || 'без папки';
+  const path = folderPath(data.folders, current.folderId);
+  $('path').textContent = path.join(' / ') || 'без папки';
+  $('footPath').textContent = path.length ? `${path.join('/')}/` : 'без папки';
   $('tags').replaceChildren(...current.tags.map(tag => {
     const chip = el('span', 'tag', `#${tag}`), remove = el('button', '', '×');
     remove.setAttribute('aria-label', `Убрать тег ${tag}`);
@@ -236,6 +259,9 @@ function renderTree() {
   const nodes = buildTree(data.folders, data.notes, query);
   $('tree').replaceChildren(...nodes.map(node => renderNode(node, filtering)));
   if (!nodes.length) $('tree').append(el('p', 't-empty', filtering ? 'ничего не найдено' : 'пусто'));
+  const target = data.folders.find(f => f.id === targetFolder());
+  $('newNote').dataset.tip = target ? `Новая заметка в «${target.name}»` : 'Новая заметка';
+  $('newFolder').dataset.tip = target ? `Новая папка в «${target.name}»` : 'Новая папка';
   if (current) renderMeta();
 }
 function renderNode(node, filtering) {
@@ -252,20 +278,21 @@ function renderNode(node, filtering) {
     label.setAttribute('role', 'treeitem');
     item.classList.toggle('active', node.note.id === current?.id);
     label.onclick = () => openNote(node.note.id).catch(fail);
+    row.append(moreButton(`Действия с заметкой ${noteTitle(node.note)}`, button => openMenu('noteMenu', node.note, button)));
     return item;
   }
   const {folder} = node, expanded = filtering || openFolders.has(folder.id);
   item.classList.toggle('closed', !expanded);
+  item.classList.toggle('selected', folder.id === selectedFolder);
   label.append(el('span', 't-name', folder.name), el('span', 't-count', `· ${node.count}`));
   label.setAttribute('role', 'treeitem'); label.setAttribute('aria-expanded', String(expanded));
+  // First click selects (and opens); clicking the selected folder again collapses or expands it.
   label.onclick = () => {
-    if (openFolders.has(folder.id)) openFolders.delete(folder.id); else openFolders.add(folder.id);
+    if (selectedFolder === folder.id && openFolders.has(folder.id)) openFolders.delete(folder.id); else openFolders.add(folder.id);
+    selectedFolder = folder.id;
     setPref('open', [...openFolders]); renderTree();
   };
-  const more = el('button', 't-more');
-  more.innerHTML = icons.more; more.setAttribute('aria-label', `Действия с папкой ${folder.name}`); more.setAttribute('aria-haspopup', 'menu');
-  more.onclick = () => openTreeMenu(folder, more);
-  row.append(more);
+  row.append(moreButton(`Действия с папкой ${folder.name}`, button => openMenu('treeMenu', folder, button)));
   row.addEventListener('dragover', event => { if (canDrop(folder.id)) { event.preventDefault(); clearDropMarks(); row.classList.add('drop'); } });
   row.addEventListener('dragleave', () => row.classList.remove('drop'));
   row.addEventListener('drop', event => { event.preventDefault(); event.stopPropagation(); dropInto(folder.id); });
@@ -309,21 +336,35 @@ $('tree').addEventListener('dragover', event => {
 });
 $('tree').addEventListener('dragleave', event => { if (!$('tree').contains(event.relatedTarget)) $('tree').classList.remove('drop-root'); });
 $('tree').addEventListener('drop', event => { event.preventDefault(); dropInto(null); });
+// A click on empty space in the tree drops the folder selection.
+$('tree').addEventListener('click', event => { if (event.target === $('tree') && selectedFolder) { selectedFolder = null; renderTree(); } });
 
-// ——— Folder menu ———
+// ——— Folder and note menus (⋮ in the tree) ———
 
-let menuFolder = null;
-function openTreeMenu(folder, button) {
-  const wasOpen = !$('treeMenu').hidden && menuFolder?.id === folder.id;
+let menuTarget = null;
+function moreButton(label, onclick) {
+  const more = el('button', 't-more');
+  more.innerHTML = icons.more; more.setAttribute('aria-label', label); more.setAttribute('aria-haspopup', 'menu');
+  more.onclick = () => onclick(more);
+  return more;
+}
+function openMenu(id, target, button) {
+  const wasOpen = !$(id).hidden && menuTarget?.id === target.id;
   closePopovers();
   if (wasOpen) return;
-  menuFolder = folder;
+  menuTarget = target;
   button.setAttribute('aria-expanded', 'true');
-  place($('treeMenu'), button.getBoundingClientRect(), 'right');
-  $('treeMenu').querySelector('button').focus();
+  place($(id), button.getBoundingClientRect(), 'right');
+  $(id).querySelector('button').focus();
 }
+$('noteMenu').addEventListener('click', event => {
+  const note = menuTarget;
+  if (event.target.closest('button')?.dataset.action !== 'delete' || !note) return;
+  closePopovers();
+  removeNote(note.id).catch(fail);
+});
 $('treeMenu').addEventListener('click', event => {
-  const action = event.target.closest('button')?.dataset.action, folder = menuFolder;
+  const action = event.target.closest('button')?.dataset.action, folder = menuTarget;
   if (!action || !folder) return;
   closePopovers();
   ({
@@ -361,27 +402,12 @@ function plural(n, one, few, many) {
 
 for (const button of document.querySelectorAll('[data-icon]')) button.innerHTML = icons[button.dataset.icon];
 
-$('newNote').onclick = () => newNote(current?.folderId ?? null).catch(fail);
-$('newFolder').onclick = () => newFolder(current?.folderId ?? null).catch(fail);
-$('deleteNote').onclick = async () => {
-  if (!current) return;
-  const note = current;
-  if (!await confirmDelete(`Удалить заметку «${noteTitle(note)}» навсегда?`)) return;
-  await queue(async () => {
-    const order = flatNotes(), index = order.findIndex(n => n.id === note.id);
-    clearTimeout(timer); timer = null; current = null;
-    await deleteNote(note.id);
-    data.notes = data.notes.filter(n => n.id !== note.id);
-    const next = order[index + 1] || order[index - 1];
-    next && next.id !== note.id ? showNote(data.notes.find(n => n.id === next.id)) : showEmpty();
-  }).catch(fail);
-  renderTree();
-};
+$('newNote').onclick = () => newNote(targetFolder()).catch(fail);
+$('newFolder').onclick = () => newFolder(targetFolder()).catch(fail);
 
-const formatButtons = [...document.querySelectorAll('.tb-format button')];
+const formatButtons = [...document.querySelectorAll('#format button')];
 const toggles = ['bold', 'italic', 'heading', 'bulletList', 'orderedList', 'taskList', 'blockquote', 'codeBlock'];
 function updateToolbar() {
-  $('deleteNote').disabled = !current;
   for (const button of formatButtons) {
     const command = button.dataset.cmd;
     button.disabled = !current || (command === 'undo' || command === 'redo') && !editor.can(command);
@@ -399,7 +425,7 @@ function updateTableContext() {
   const rect = current && document.activeElement?.closest('#editor') && editor.inTable() ? editor.cellRect() : null;
   if (rect) place($('tableContext'), rect); else $('tableContext').hidden = true;
 }
-$('note').addEventListener('scroll', () => { $('tableContext').hidden = true; });
+$('scroll').addEventListener('scroll', () => { $('tableContext').hidden = true; });
 addEventListener('resize', () => { $('tableContext').hidden = true; closePopovers(); });
 $('editor').addEventListener('focusout', () => setTimeout(updateTableContext));
 
