@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildChatTools, CHAT_TOOLS} from '../src/agent/tools.ts';
-import {systemPrompt} from '../src/agent/prompt.ts';
+import {buildAgentTools, buildChatTools, CHAT_TOOLS} from '../src/agent/tools.ts';
+import {agentSystemPrompt, systemPrompt} from '../src/agent/prompt.ts';
 import {DEFAULT_PROFILES} from '../src/agent/profiles.ts';
 import {modelContext} from '../src/llm/ollama.ts';
 import type {Profile} from '../src/store/types.ts';
@@ -10,8 +10,9 @@ const [assistant, qa] = DEFAULT_PROFILES;
 const json = (body: unknown) => (async () => new Response(JSON.stringify(body), {status: 200})) as unknown as typeof fetch;
 
 test('buildChatTools: только читающие инструменты, отмеченные в профиле', () => {
-  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read']);
-  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); })).sort(), ['find', 'read', 'snapshot']);
+  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read']);
+  const notes = {search: async () => '', read: async () => '', create: async () => '', append: async () => ''};
+  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['find', 'notes_read', 'notes_search', 'read', 'snapshot']);
   const noFind: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'find')};
   assert.ok(!('find' in buildChatTools(noFind, async () => { throw new Error('не нужно'); })));
 });
@@ -39,4 +40,42 @@ test('systemPrompt: с инструментами — правило о соде
 test('modelContext: из /api/ps, иначе 8192', async () => {
   assert.equal(await modelContext('http://x', 'm', json({models: [{name: 'm', context_length: 32768}]})), 32768);
   assert.equal(await modelContext('http://x', 'm', json({models: []})), 8192);
+});
+
+const fakeCtx = () => {
+  const calls: string[] = [];
+  const answer = (name: string) => async (args: unknown) => { calls.push(`${name} ${JSON.stringify(args)}`); return {ok: true, text: `${name} ok`}; };
+  const tools = new Proxy({}, {get: (_t, name: string) => (name === 'then' ? undefined : answer(name))});
+  return {
+    calls,
+    ctx: {
+      tabs: {current: async () => tools, list: async () => 'список', open: async () => 'открыта', switch: async () => 'переключена', close: async () => 'закрыта'},
+      notes: {search: async () => 'найдено', read: async () => 'заметка', create: async () => 'создана', append: async () => 'дописано'},
+      ask: async () => 'ответ пользователя',
+      confirmNotes: async () => false,
+    } as any,
+  };
+};
+
+test('buildAgentTools: действия из профиля, без screenshot и QA-проверок', () => {
+  const keys = Object.keys(buildAgentTools(qa, fakeCtx().ctx));
+  for (const name of ['click', 'type', 'navigate', 'tabs', 'highlight', 'ask_user', 'notes_append', 'done', 'snapshot']) assert.ok(keys.includes(name), name);
+  for (const name of ['screenshot', 'console_log', 'network_log', 'page_checks']) assert.ok(!keys.includes(name), name);
+  const noClick: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'click')};
+  assert.ok(!('click' in buildAgentTools(noClick, fakeCtx().ctx)));
+});
+
+test('buildAgentTools: done возвращает итог, click идёт в текущую вкладку, отказ по заметке — USER_DECLINED', async () => {
+  const {ctx, calls} = fakeCtx();
+  const tools = buildAgentTools(assistant, ctx) as any;
+  assert.equal(await tools.done.execute({outcome: 'success', summary: 'Готово'}, {toolCallId: '1', messages: []}), 'Готово');
+  assert.equal(await tools.click.execute({ref: 'a1'}, {toolCallId: '2', messages: []}), 'click ok');
+  assert.deepEqual(calls, ['click {"ref":"a1"}']);
+  assert.match(await tools.notes_append.execute({id: 'n', text: 'x'}, {toolCallId: '3', messages: []}), /USER_DECLINED/);
+  assert.equal(await tools.ask_user.execute({question: '?', kind: 'input'}, {toolCallId: '4', messages: []}), 'ответ пользователя');
+});
+
+test('agentSystemPrompt: правила работы, шаги пользователя, маркеры, роль', () => {
+  const text = agentSystemPrompt(qa, ['click', 'done', 'ask_user']);
+  for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки']) assert.ok(text.includes(piece), piece);
 });
