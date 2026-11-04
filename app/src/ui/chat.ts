@@ -1,7 +1,7 @@
 // The Chat view: the transcript of the open conversation and the composer under it.
 // Replies are produced by the service worker; this view renders its events and reads history from the database.
-import type {WorkerToPanel} from '../shared/protocol.ts';
-import type {Message, Profile} from '../store/types.ts';
+import type {PanelAnswer, PendingPrompt, WorkerToPanel} from '../shared/protocol.ts';
+import type {ChatMode, Message, PermissionMode, Profile} from '../store/types.ts';
 import type {Client} from './client.ts';
 import {applyEvent, emptyChat, type ChatState} from './chat-state.ts';
 import {renderMarkdown} from './markdown.ts';
@@ -44,6 +44,10 @@ export function initChat(client: Client): ChatView {
   const input = $<HTMLTextAreaElement>('prompt');
   const send = $<HTMLButtonElement>('sendButton');
   const profileSelect = $<HTMLSelectElement>('profileSelect');
+  const modeSelect = $<HTMLSelectElement>('modeSelect');
+  const permissionSelect = $<HTMLSelectElement>('permissionSelect');
+  /** Every open agent question, in any chat; the open chat shows its own. */
+  const allPrompts = new Map<string, PendingPrompt>();
   const modelSelect = $<HTMLSelectElement>('modelSelect');
 
   // ——— Rendering ———
@@ -103,6 +107,7 @@ export function initChat(client: Client): ChatView {
         if (transcript.children[index] !== node) transcript.insertBefore(node, transcript.children[index] ?? null);
       });
     }
+    renderPrompts();
     if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
     const busy = state.running || state.pendingRequestId !== null;
     send.innerHTML = icons[state.running ? 'stop' : 'send'];
@@ -110,6 +115,64 @@ export function initChat(client: Client): ChatView {
     send.setAttribute('aria-label', state.running ? 'Остановить' : 'Отправить');
     send.disabled = !state.running && busy;
   }
+
+  /** The agent's questions as cards at the end of the transcript; answering sends the answer to the worker. */
+  function renderPrompts(): void {
+    transcript.querySelectorAll('.prompt-card').forEach(card => { if (!state.prompts.some(p => p.id === (card as HTMLElement).dataset.id)) card.remove(); });
+    for (const prompt of state.prompts) {
+      if (transcript.querySelector(`.prompt-card[data-id="${prompt.id}"]`)) continue;
+      const card = document.createElement('div');
+      card.className = 'prompt-card';
+      card.dataset.id = prompt.id;
+      const text = document.createElement('p');
+      text.textContent = prompt.text;
+      const row = document.createElement('div');
+      row.className = 'row';
+      const answer = (value: PanelAnswer) => client.post({type: 'answer', promptId: prompt.id, answer: value});
+      const button = (label: string, value: PanelAnswer, cls = '') => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label; if (cls) b.className = cls;
+        b.onclick = () => { card.querySelectorAll('button').forEach(x => (x as HTMLButtonElement).disabled = true); answer(value); };
+        return b;
+      };
+      if (prompt.kind === 'confirm') {
+        row.append(button('Разрешить', 'allow', 'primary'));
+        if (prompt.site) row.append(button(`Разрешать на ${prompt.site}`, 'allow-site'));
+        row.append(button('Отклонить', 'deny', 'danger'));
+      } else if (prompt.kind === 'takeover') {
+        row.append(button('Готово', 'done', 'primary'), button('Отменить', 'cancel', 'danger'));
+      } else {
+        const field = document.createElement('input');
+        field.placeholder = 'ваш ответ';
+        const send = () => { const value = field.value.trim(); if (value) answer({text: value}); };
+        field.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); send(); } });
+        const ok = document.createElement('button');
+        ok.type = 'button'; ok.className = 'primary'; ok.textContent = 'Ответить'; ok.onclick = send;
+        row.append(field, ok, button('Не отвечать', 'cancel'));
+      }
+      card.append(text, row);
+      transcript.append(card);
+    }
+  }
+
+  // ——— Mode ———
+
+  const prefMode = () => (pref('assistant:mode') === 'agent' ? 'agent' : 'chat') as ChatMode;
+  const prefPermission = () => (pref('assistant:permission') === 'auto' ? 'auto' : 'ask') as PermissionMode;
+  function showMode(mode: ChatMode, permission: PermissionMode): void {
+    modeSelect.value = mode;
+    permissionSelect.value = permission;
+    permissionSelect.hidden = mode !== 'agent';
+  }
+  const onModeChange = () => {
+    const mode = modeSelect.value as ChatMode, permission = permissionSelect.value as PermissionMode;
+    showMode(mode, permission);
+    setPref('assistant:mode', mode);
+    setPref('assistant:permission', permission);
+    if (state.conversationId) client.post({type: 'mode', conversationId: state.conversationId, mode, permission});
+  };
+  modeSelect.addEventListener('change', onModeChange);
+  permissionSelect.addEventListener('change', onModeChange);
 
   function emptyHint(): HTMLElement {
     const hint = document.createElement('div');
@@ -168,7 +231,8 @@ export function initChat(client: Client): ChatView {
     state = {...state, pendingRequestId: requestId};
     input.value = '';
     render();
-    client.post({type: 'send', requestId, conversationId: state.conversationId, text, profileId: profileSelect.value, tabId: await activeTab()});
+    client.post({type: 'send', requestId, conversationId: state.conversationId, text, profileId: profileSelect.value, tabId: await activeTab(),
+      mode: modeSelect.value as ChatMode, permission: permissionSelect.value as PermissionMode});
   }
 
   $('composer').addEventListener('submit', event => { event.preventDefault(); void submit(); });
@@ -181,8 +245,10 @@ export function initChat(client: Client): ChatView {
   async function open(conversationId: string | null): Promise<void> {
     const conversation = conversationId ? await getConversation(conversationId) : undefined;
     const id = conversation?.id ?? null;
-    state = {conversationId: id, pendingRequestId: null, messages: id ? await listMessages(id) : [], running: id !== null && running.has(id)};
+    state = {conversationId: id, pendingRequestId: null, messages: id ? await listMessages(id) : [], running: id !== null && running.has(id),
+      prompts: [...allPrompts.values()].filter(p => p.conversationId === id)};
     if (conversation && profiles.some(p => p.id === conversation.profileId)) profileSelect.value = conversation.profileId;
+    showMode(conversation?.mode ?? prefMode(), conversation?.permission ?? prefPermission());
     setPref(LAST, id);
     nodes.clear();
     filled.clear();
@@ -205,7 +271,9 @@ export function initChat(client: Client): ChatView {
   });
 
   function handle(event: WorkerToPanel): void {
-    if (event.type === 'running') { running.clear(); event.conversationIds.forEach(id => running.add(id)); }
+    if (event.type === 'running') { running.clear(); event.conversationIds.forEach(id => running.add(id)); allPrompts.clear(); event.prompts?.forEach(p => allPrompts.set(p.id, p)); }
+    if (event.type === 'prompt') allPrompts.set(event.prompt.id, event.prompt);
+    if (event.type === 'prompt-closed') allPrompts.delete(event.promptId);
     if (event.type === 'started') running.add(event.conversation.id);
     if (event.type === 'finished' || event.type === 'deleted') running.delete(event.conversationId);
     if (event.type === 'deleted' && event.conversationId === state.conversationId) {

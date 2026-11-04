@@ -1,7 +1,8 @@
 // Settings sections of the assistant: the Ollama connection and the profile editor.
 // They live in the notes UI's settings dialog and refresh every time it opens.
 import type {Profile, ToolName} from '../store/types.ts';
-import {getSettings, saveSettings} from '../store/settings.ts';
+import {getSettings, saveSettings, setSiteRule} from '../store/settings.ts';
+import type {SiteRule} from '../store/types.ts';
 import {checkOllama} from '../llm/ollama.ts';
 import {deleteProfile, listProfiles, putProfile} from '../store/assistant-db.ts';
 import {DEFAULT_PROFILES, TOOL_CATALOGUE, validateProfile, type ToolGroup} from '../agent/profiles.ts';
@@ -119,8 +120,46 @@ export function initSettings(): void {
     await loadProfiles();
   });
 
+  // ——— Agent: frame and site rules ———
+
+  const border = $<HTMLInputElement>('borderToggle');
+  const rules = $('siteRules');
+  const RULE_TEXT: Record<SiteRule, string> = {allow: 'разрешать', ask: 'спрашивать', block: 'блокировать'};
+
+  async function renderAgent(): Promise<void> {
+    const settings = await getSettings();
+    border.checked = settings.border;
+    const entries = Object.entries(settings.siteRules).sort(([a], [b]) => a.localeCompare(b));
+    rules.replaceChildren(...entries.map(([site, rule]) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const name = document.createElement('span');
+      name.className = 'site'; name.textContent = site;
+      const select = document.createElement('select');
+      for (const value of ['allow', 'ask', 'block'] as SiteRule[]) select.append(new Option(RULE_TEXT[value], value));
+      select.value = rule;
+      select.onchange = async () => { await setSiteRule(site, select.value as SiteRule); };
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.textContent = 'Убрать';
+      remove.onclick = async () => { await setSiteRule(site, null); await renderAgent(); };
+      row.append(name, select, remove);
+      return row;
+    }));
+    if (!entries.length) { const empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = 'Правил пока нет.'; rules.append(empty); }
+  }
+  border.addEventListener('change', () => { void saveSettings({border: border.checked}); });
+  $('addSiteRule').addEventListener('click', async () => {
+    const input = $<HTMLInputElement>('siteRuleSite');
+    const site = input.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    if (!site) return;
+    await setSiteRule(site, $<HTMLSelectElement>('siteRuleValue').value as SiteRule);
+    input.value = '';
+    await renderAgent();
+  });
+
   $('openSettings').addEventListener('click', () => {
     void loadProfiles();
     void check();
+    void renderAgent();
   });
 }

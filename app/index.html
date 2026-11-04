@@ -35,6 +35,8 @@
   <form id="composer">
     <textarea id="prompt" rows="3" placeholder="Спросите что-нибудь…" aria-label="Сообщение"></textarea>
     <div class="composer-row">
+      <select id="modeSelect" aria-label="Режим" data-tip="Режим: чат отвечает и читает, агент действует на страницах"><option value="chat">Чат</option><option value="agent">Агент</option></select>
+      <select id="permissionSelect" aria-label="Опасные действия" data-tip="Опасные действия (отправка, удаление, выход)"><option value="ask">Спрашивать</option><option value="auto">Сам</option></select>
       <select id="profileSelect" aria-label="Профиль" data-tip="Профиль"></select>
       <select id="modelSelect" aria-label="Модель" data-tip="Модель"></select>
       <span class="tb-spacer"></span>
@@ -133,6 +135,13 @@
     <div class="row"><select id="settingsModel" aria-label="Модель по умолчанию"></select><button id="checkOllama" type="button">Проверить</button></div>
     <p id="ollamaStatus" class="muted" role="status"></p>
     <p class="muted">Ollama должна быть запущена с переменными <code>OLLAMA_ORIGINS=chrome-extension://*</code> и <code>OLLAMA_CONTEXT_LENGTH</code> не меньше 16384.</p>
+  </section>
+  <section>
+    <h3>Агент</h3>
+    <label class="check"><input id="borderToggle" type="checkbox"> Рамка вокруг страницы, с которой работает агент</label>
+    <p class="muted">Правила сайтов: «разрешать» — опасные действия без вопроса, «спрашивать» — всегда спрашивать, «блокировать» — агент туда не ходит.</p>
+    <div id="siteRules"></div>
+    <div class="row"><input id="siteRuleSite" placeholder="example.com" autocomplete="off" spellcheck="false"><select id="siteRuleValue"><option value="allow">разрешать</option><option value="ask">спрашивать</option><option value="block">блокировать</option></select><button id="addSiteRule" type="button">Добавить</button></div>
   </section>
   <section>
     <h3>Профили</h3>

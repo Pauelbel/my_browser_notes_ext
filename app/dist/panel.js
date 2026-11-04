@@ -203,7 +203,7 @@ function initViews() {
 }
 
 // src/ui/chat-state.ts
-var emptyChat = { conversationId: null, pendingRequestId: null, messages: [], running: false };
+var emptyChat = { conversationId: null, pendingRequestId: null, messages: [], running: false, prompts: [] };
 function upsert(messages, message) {
   const index = messages.findIndex((m) => m.id === message.id);
   if (index === -1) return [...messages, message];
@@ -215,9 +215,10 @@ function applyEvent(state, event) {
   switch (event.type) {
     case "running": {
       const running = state.conversationId !== null && event.conversationIds.includes(state.conversationId);
-      if (running) return { ...state, running };
+      const prompts = (event.prompts ?? []).filter((p) => p.conversationId === state.conversationId);
+      if (running) return { ...state, running, prompts };
       const messages = state.messages.some((m) => m.status === "streaming") ? state.messages.map((m) => m.status === "streaming" ? { ...m, status: "interrupted" } : m) : state.messages;
-      return { ...state, running, messages };
+      return { ...state, running, messages, prompts };
     }
     case "deleted":
       return event.conversationId === state.conversationId ? emptyChat : state;
@@ -228,7 +229,8 @@ function applyEvent(state, event) {
         conversationId: event.conversation.id,
         pendingRequestId: mine ? null : state.pendingRequestId,
         messages: upsert(upsert(state.messages, event.user), event.assistant),
-        running: true
+        running: true,
+        prompts: mine ? [] : state.prompts
       };
     }
     case "delta": {
@@ -251,8 +253,9 @@ function applyEvent(state, event) {
       return { ...state, messages: upsert(state.messages, { ...message, steps }) };
     }
     case "prompt":
+      return event.prompt.conversationId === state.conversationId ? { ...state, prompts: [...state.prompts.filter((p) => p.id !== event.prompt.id), event.prompt] } : state;
     case "prompt-closed":
-      return state;
+      return state.prompts.some((p) => p.id === event.promptId) ? { ...state, prompts: state.prompts.filter((p) => p.id !== event.promptId) } : state;
     case "busy":
       return event.requestId === state.pendingRequestId ? { ...state, pendingRequestId: null } : state;
   }
@@ -3768,6 +3771,13 @@ async function saveSettings(patch, area = defaultArea()) {
   await area.set({ [KEY2]: next });
   return next;
 }
+async function setSiteRule(site, rule, area = defaultArea()) {
+  const current = await getSettings(area);
+  const siteRules = { ...current.siteRules };
+  if (rule) siteRules[site] = rule;
+  else delete siteRules[site];
+  return saveSettings({ siteRules }, area);
+}
 
 // src/llm/ollama.ts
 var MIN_CONTEXT = 16384;
@@ -3881,6 +3891,9 @@ function initChat(client2) {
   const input = $2("prompt");
   const send = $2("sendButton");
   const profileSelect = $2("profileSelect");
+  const modeSelect = $2("modeSelect");
+  const permissionSelect = $2("permissionSelect");
+  const allPrompts = /* @__PURE__ */ new Map();
   const modelSelect = $2("modelSelect");
   function messageNode(message) {
     let node = nodes.get(message.id);
@@ -3943,6 +3956,7 @@ function initChat(client2) {
         if (transcript.children[index] !== node) transcript.insertBefore(node, transcript.children[index] ?? null);
       });
     }
+    renderPrompts();
     if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
     const busy = state.running || state.pendingRequestId !== null;
     send.innerHTML = icons[state.running ? "stop" : "send"];
@@ -3950,6 +3964,77 @@ function initChat(client2) {
     send.setAttribute("aria-label", state.running ? "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C" : "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C");
     send.disabled = !state.running && busy;
   }
+  function renderPrompts() {
+    transcript.querySelectorAll(".prompt-card").forEach((card) => {
+      if (!state.prompts.some((p) => p.id === card.dataset.id)) card.remove();
+    });
+    for (const prompt of state.prompts) {
+      if (transcript.querySelector(`.prompt-card[data-id="${prompt.id}"]`)) continue;
+      const card = document.createElement("div");
+      card.className = "prompt-card";
+      card.dataset.id = prompt.id;
+      const text2 = document.createElement("p");
+      text2.textContent = prompt.text;
+      const row = document.createElement("div");
+      row.className = "row";
+      const answer = (value) => client2.post({ type: "answer", promptId: prompt.id, answer: value });
+      const button = (label, value, cls = "") => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.onclick = () => {
+          card.querySelectorAll("button").forEach((x2) => x2.disabled = true);
+          answer(value);
+        };
+        return b;
+      };
+      if (prompt.kind === "confirm") {
+        row.append(button("\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C", "allow", "primary"));
+        if (prompt.site) row.append(button(`\u0420\u0430\u0437\u0440\u0435\u0448\u0430\u0442\u044C \u043D\u0430 ${prompt.site}`, "allow-site"));
+        row.append(button("\u041E\u0442\u043A\u043B\u043E\u043D\u0438\u0442\u044C", "deny", "danger"));
+      } else if (prompt.kind === "takeover") {
+        row.append(button("\u0413\u043E\u0442\u043E\u0432\u043E", "done", "primary"), button("\u041E\u0442\u043C\u0435\u043D\u0438\u0442\u044C", "cancel", "danger"));
+      } else {
+        const field = document.createElement("input");
+        field.placeholder = "\u0432\u0430\u0448 \u043E\u0442\u0432\u0435\u0442";
+        const send2 = () => {
+          const value = field.value.trim();
+          if (value) answer({ text: value });
+        };
+        field.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            send2();
+          }
+        });
+        const ok = document.createElement("button");
+        ok.type = "button";
+        ok.className = "primary";
+        ok.textContent = "\u041E\u0442\u0432\u0435\u0442\u0438\u0442\u044C";
+        ok.onclick = send2;
+        row.append(field, ok, button("\u041D\u0435 \u043E\u0442\u0432\u0435\u0447\u0430\u0442\u044C", "cancel"));
+      }
+      card.append(text2, row);
+      transcript.append(card);
+    }
+  }
+  const prefMode = () => pref("assistant:mode") === "agent" ? "agent" : "chat";
+  const prefPermission = () => pref("assistant:permission") === "auto" ? "auto" : "ask";
+  function showMode(mode, permission) {
+    modeSelect.value = mode;
+    permissionSelect.value = permission;
+    permissionSelect.hidden = mode !== "agent";
+  }
+  const onModeChange = () => {
+    const mode = modeSelect.value, permission = permissionSelect.value;
+    showMode(mode, permission);
+    setPref("assistant:mode", mode);
+    setPref("assistant:permission", permission);
+    if (state.conversationId) client2.post({ type: "mode", conversationId: state.conversationId, mode, permission });
+  };
+  modeSelect.addEventListener("change", onModeChange);
+  permissionSelect.addEventListener("change", onModeChange);
   function emptyHint() {
     const hint = document.createElement("div");
     hint.className = "chat-empty";
@@ -4002,7 +4087,16 @@ function initChat(client2) {
     state = { ...state, pendingRequestId: requestId };
     input.value = "";
     render();
-    client2.post({ type: "send", requestId, conversationId: state.conversationId, text: text2, profileId: profileSelect.value, tabId: await activeTab() });
+    client2.post({
+      type: "send",
+      requestId,
+      conversationId: state.conversationId,
+      text: text2,
+      profileId: profileSelect.value,
+      tabId: await activeTab(),
+      mode: modeSelect.value,
+      permission: permissionSelect.value
+    });
   }
   $2("composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -4017,8 +4111,15 @@ function initChat(client2) {
   async function open(conversationId) {
     const conversation = conversationId ? await getConversation(conversationId) : void 0;
     const id = conversation?.id ?? null;
-    state = { conversationId: id, pendingRequestId: null, messages: id ? await listMessages(id) : [], running: id !== null && running.has(id) };
+    state = {
+      conversationId: id,
+      pendingRequestId: null,
+      messages: id ? await listMessages(id) : [],
+      running: id !== null && running.has(id),
+      prompts: [...allPrompts.values()].filter((p) => p.conversationId === id)
+    };
     if (conversation && profiles.some((p) => p.id === conversation.profileId)) profileSelect.value = conversation.profileId;
+    showMode(conversation?.mode ?? prefMode(), conversation?.permission ?? prefPermission());
     setPref(LAST, id);
     nodes.clear();
     filled.clear();
@@ -4047,7 +4148,11 @@ function initChat(client2) {
     if (event.type === "running") {
       running.clear();
       event.conversationIds.forEach((id) => running.add(id));
+      allPrompts.clear();
+      event.prompts?.forEach((p) => allPrompts.set(p.id, p));
     }
+    if (event.type === "prompt") allPrompts.set(event.prompt.id, event.prompt);
+    if (event.type === "prompt-closed") allPrompts.delete(event.promptId);
     if (event.type === "started") running.add(event.conversation.id);
     if (event.type === "finished" || event.type === "deleted") running.delete(event.conversationId);
     if (event.type === "deleted" && event.conversationId === state.conversationId) {
@@ -4341,9 +4446,57 @@ function initSettings() {
     await deleteProfile(profile.id);
     await loadProfiles();
   });
+  const border = $5("borderToggle");
+  const rules = $5("siteRules");
+  const RULE_TEXT = { allow: "\u0440\u0430\u0437\u0440\u0435\u0448\u0430\u0442\u044C", ask: "\u0441\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u0442\u044C", block: "\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u0442\u044C" };
+  async function renderAgent() {
+    const settings = await getSettings();
+    border.checked = settings.border;
+    const entries2 = Object.entries(settings.siteRules).sort(([a3], [b]) => a3.localeCompare(b));
+    rules.replaceChildren(...entries2.map(([site, rule]) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const name2 = document.createElement("span");
+      name2.className = "site";
+      name2.textContent = site;
+      const select = document.createElement("select");
+      for (const value of ["allow", "ask", "block"]) select.append(new Option(RULE_TEXT[value], value));
+      select.value = rule;
+      select.onchange = async () => {
+        await setSiteRule(site, select.value);
+      };
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "\u0423\u0431\u0440\u0430\u0442\u044C";
+      remove.onclick = async () => {
+        await setSiteRule(site, null);
+        await renderAgent();
+      };
+      row.append(name2, select, remove);
+      return row;
+    }));
+    if (!entries2.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "\u041F\u0440\u0430\u0432\u0438\u043B \u043F\u043E\u043A\u0430 \u043D\u0435\u0442.";
+      rules.append(empty);
+    }
+  }
+  border.addEventListener("change", () => {
+    void saveSettings({ border: border.checked });
+  });
+  $5("addSiteRule").addEventListener("click", async () => {
+    const input = $5("siteRuleSite");
+    const site = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    if (!site) return;
+    await setSiteRule(site, $5("siteRuleValue").value);
+    input.value = "";
+    await renderAgent();
+  });
   $5("openSettings").addEventListener("click", () => {
     void loadProfiles();
     void check();
+    void renderAgent();
   });
 }
 

@@ -268,3 +268,18 @@ dialog code { font: 11px var(--mono); background: var(--soft); padding: 0 3px; b
 .steps-list { padding: 4px 0 0 12px; border-left: 2px solid var(--line); margin-top: 4px; }
 .step { white-space: pre-wrap; overflow-wrap: anywhere; }
 .step.error { color: var(--danger); }
+
+/* Agent: questions in the transcript */
+.prompt-card { align-self: stretch; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, var(--bg)); font-size: 13px; }
+.prompt-card p { margin: 0 0 8px; }
+.prompt-card .row { gap: 6px; }
+.prompt-card button { padding: 4px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); }
+.prompt-card button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.prompt-card button.danger { border-color: var(--danger); }
+.prompt-card input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); }
+#permissionSelect[hidden] { display: none; }
+dialog .check { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
+dialog .check input { display: inline; width: auto; margin: 0; accent-color: var(--accent); }
+#siteRules .row { margin: 4px 0; }
+#siteRules .site { flex: 1; font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; }
+dialog #siteRuleSite { flex: 1; min-width: 0; margin: 0; }

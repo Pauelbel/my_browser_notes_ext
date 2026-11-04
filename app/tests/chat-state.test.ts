@@ -7,7 +7,7 @@ const conversation: Conversation = {id: 'c1', title: 't', titleByUser: false, pr
 const user: Message = {id: 'u', conversationId: 'c1', role: 'user', text: 'привет', reasoning: '', status: 'done', createdAt: 1};
 const assistant: Message = {...user, id: 'a', role: 'assistant', text: '', status: 'streaming', createdAt: 2};
 const started = (requestId: string, c = conversation) => ({type: 'started' as const, requestId, conversation: c, user: {...user, conversationId: c.id}, assistant: {...assistant, conversationId: c.id}});
-const inChat: ChatState = {conversationId: 'c1', pendingRequestId: null, messages: [user, assistant], running: true};
+const inChat: ChatState = {conversationId: 'c1', pendingRequestId: null, messages: [user, assistant], running: true, prompts: []};
 
 test('started своего запроса усыновляет новый чат', () => {
   const s = applyEvent({...emptyChat, pendingRequestId: 'r1'}, started('r1'));
@@ -73,4 +73,16 @@ test('step добавляет и обновляет шаг текущего со
   assert.equal(s.messages[1].steps?.length, 1);
   assert.equal(s.messages[1].steps?.[0].status, 'done');
   assert.deepEqual(applyEvent(inChat, {type: 'step', conversationId: 'c2', messageId: 'a', step}), inChat);
+});
+
+const ask = (id: string, conversationId = 'c1') => ({id, conversationId, kind: 'confirm' as const, text: 'Нажать «Удалить»?'});
+
+test('вопросы: свой чат добавляется, чужой нет; prompt-closed убирает; running заменяет список своими', () => {
+  let s = applyEvent(inChat, {type: 'prompt', prompt: ask('p1')});
+  assert.deepEqual(s.prompts.map(p => p.id), ['p1']);
+  assert.deepEqual(applyEvent(inChat, {type: 'prompt', prompt: ask('p2', 'c2')}).prompts, []);
+  s = applyEvent(s, {type: 'prompt-closed', promptId: 'p1'});
+  assert.deepEqual(s.prompts, []);
+  s = applyEvent(inChat, {type: 'running', conversationIds: ['c1'], prompts: [ask('p3'), ask('p4', 'c2')]});
+  assert.deepEqual(s.prompts.map(p => p.id), ['p3']);
 });
