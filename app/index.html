@@ -127,6 +127,25 @@
 <dialog id="settingsDialog" aria-labelledby="settingsTitle">
   <form method="dialog" class="dialog-head"><h2 id="settingsTitle">Настройки</h2><button aria-label="Закрыть">✕</button></form>
   <section>
+    <h3>Модель</h3>
+    <label class="field" for="ollamaUrl">Адрес Ollama</label>
+    <input id="ollamaUrl" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false">
+    <div class="row"><select id="settingsModel" aria-label="Модель по умолчанию"></select><button id="checkOllama" type="button">Проверить</button></div>
+    <p id="ollamaStatus" class="muted" role="status"></p>
+    <p class="muted">Ollama должна быть запущена с переменными <code>OLLAMA_ORIGINS=chrome-extension://*</code> и <code>OLLAMA_CONTEXT_LENGTH</code> не меньше 16384.</p>
+  </section>
+  <section>
+    <h3>Профили</h3>
+    <div class="row"><select id="profileList" aria-label="Профиль"></select><button id="newProfile" type="button">Новый</button><button id="deleteProfile" type="button" class="danger">Удалить</button></div>
+    <label class="field" for="profileName">Название</label>
+    <input id="profileName" maxlength="40" autocomplete="off">
+    <label class="field" for="profilePrompt">Роль</label>
+    <textarea id="profilePrompt" rows="6"></textarea>
+    <p class="muted">Общие правила работы добавляются к роли автоматически.</p>
+    <p id="profileError" class="field-error" role="alert" hidden></p>
+    <fieldset id="profileTools"><legend>Инструменты <span class="muted">— заработают в следующих версиях</span></legend></fieldset>
+  </section>
+  <section>
     <h3>Резервная копия</h3>
     <p class="muted">Все заметки сохраняются как .md-файлы в новую папку с датой внутри выбранной. Ничего не перезаписывается.</p>
     <p>Папка: <strong id="backupDir">не выбрана</strong></p>

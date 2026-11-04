@@ -4,6 +4,7 @@ import {connect} from './client.ts';
 import {initViews} from './views.ts';
 import {initChat, type ChatView} from './chat.ts';
 import {initHistory} from './history.ts';
+import {initSettings} from './settings.ts';
 
 initViews();
 await openAssistantDb();
@@ -12,3 +13,4 @@ const client = connect(event => chat?.handle(event));
 chat = initChat(client);
 document.getElementById('newChat')!.addEventListener('click', () => { void chat!.open(null); });
 initHistory(chat, client);
+initSettings();

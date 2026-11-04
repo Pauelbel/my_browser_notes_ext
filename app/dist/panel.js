@@ -46,6 +46,15 @@ var DEFAULT_PROFILES = [
     createdAt: 1
   }
 ];
+var PROFILE_NAME_MAX = 40;
+var PROFILE_PROMPT_MAX = 4e3;
+function validateProfile(profile) {
+  const name = profile.name.trim();
+  if (!name) return "\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u043F\u0440\u043E\u0444\u0438\u043B\u044F";
+  if (name.length > PROFILE_NAME_MAX) return `\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u043D\u0435 \u0434\u043B\u0438\u043D\u043D\u0435\u0435 ${PROFILE_NAME_MAX} \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432`;
+  if (profile.prompt.length > PROFILE_PROMPT_MAX) return `\u041F\u0440\u043E\u043C\u043F\u0442 \u043D\u0435 \u0434\u043B\u0438\u043D\u043D\u0435\u0435 ${PROFILE_PROMPT_MAX} \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432`;
+  return null;
+}
 
 // src/store/assistant-db.ts
 var CHANNEL = "assistant";
@@ -119,6 +128,19 @@ async function listProfiles() {
     for (const p of DEFAULT_PROFILES) tx.objectStore("profiles").put(p);
   });
   return DEFAULT_PROFILES.map((p) => ({ ...p, tools: [...p.tools] }));
+}
+async function putProfile(profile) {
+  await write(["profiles"], (tx) => {
+    tx.objectStore("profiles").put(profile);
+  });
+}
+async function deleteProfile(id) {
+  await write(["profiles"], async (tx) => {
+    const store = tx.objectStore("profiles");
+    const count = await done(store.count());
+    if (count <= 1) throw new Error("\u041D\u0435\u043B\u044C\u0437\u044F \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u0440\u043E\u0444\u0438\u043B\u044C");
+    store.delete(id);
+  });
 }
 function onAssistantChange(callback) {
   const listener = new BroadcastChannel(CHANNEL);
@@ -3716,6 +3738,7 @@ async function saveSettings(patch, area = defaultArea()) {
 
 // src/llm/ollama.ts
 var MIN_CONTEXT = 16384;
+var ORIGINS_HINT = "Ollama \u043E\u0442\u043A\u043B\u043E\u043D\u044F\u0435\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u0440\u0430\u0441\u0448\u0438\u0440\u0435\u043D\u0438\u044F. \u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0435\u0451 \u0441 \u043F\u0435\u0440\u0435\u043C\u0435\u043D\u043D\u043E\u0439 OLLAMA_ORIGINS=chrome-extension://* \u0438 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435.";
 var CONTEXT_HINT = `\u0437\u0430\u0434\u0430\u0439\u0442\u0435 OLLAMA_CONTEXT_LENGTH \u043D\u0435 \u043C\u0435\u043D\u044C\u0448\u0435 ${MIN_CONTEXT} \u0438 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 Ollama`;
 var HttpError = class extends Error {
   statusCode;
@@ -3732,6 +3755,34 @@ async function getJson(url, fetchFn) {
 async function listModels(baseUrl, fetchFn = fetch) {
   const body = await getJson(`${baseUrl}/api/tags`, fetchFn);
   return (body.models ?? []).map((m) => m.name).sort((a3, b) => a3.localeCompare(b));
+}
+async function checkOllama(baseUrl, model, fetchFn = fetch) {
+  let models;
+  try {
+    models = await listModels(baseUrl, fetchFn);
+  } catch (error) {
+    return { ok: false, error: describeError(error, baseUrl) };
+  }
+  if (model && !models.includes(model)) return { ok: true, models, warning: `\u041C\u043E\u0434\u0435\u043B\u044C \xAB${model}\xBB \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u0432 Ollama. \u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u0440\u0443\u0433\u0443\u044E.` };
+  if (model) {
+    const running = await getJson(`${baseUrl}/api/ps`, fetchFn).catch(() => null);
+    const loaded = running?.models?.find((m) => m.name === model);
+    if (loaded?.context_length && loaded.context_length < MIN_CONTEXT) {
+      return { ok: true, models, warning: `\u041C\u043E\u0434\u0435\u043B\u044C \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442 \u0441 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u043E\u043C ${loaded.context_length} \u0442\u043E\u043A\u0435\u043D\u043E\u0432 \u2014 \u0434\u043B\u044F \u0430\u0433\u0435\u043D\u0442\u0430 \u043C\u0430\u043B\u043E: ${CONTEXT_HINT}.` };
+    }
+  }
+  return { ok: true, models };
+}
+function describeError(error, baseUrl) {
+  const status = error instanceof Response ? error.status : typeof error?.statusCode === "number" ? error.statusCode : void 0;
+  if (status === 403) return ORIGINS_HINT;
+  if (status === 404) return "\u041C\u043E\u0434\u0435\u043B\u044C \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u0432 Ollama \u2014 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u043C\u044F \u043C\u043E\u0434\u0435\u043B\u0438 \u0432 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430\u0445.";
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+  if (error instanceof TypeError || /fetch failed|Failed to fetch|ECONNREFUSED|Cannot connect/i.test(`${message} ${cause}`)) {
+    return `\u041D\u0435\u0442 \u0441\u0432\u044F\u0437\u0438 \u0441 Ollama \u043F\u043E \u0430\u0434\u0440\u0435\u0441\u0443 ${baseUrl}. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435, \u0447\u0442\u043E \u043E\u043D\u0430 \u0437\u0430\u043F\u0443\u0449\u0435\u043D\u0430 \u0438 \u0430\u0434\u0440\u0435\u0441 \u0432\u0435\u0440\u043D\u044B\u0439.`;
+  }
+  return message;
 }
 
 // icons.js
@@ -4109,6 +4160,126 @@ function initHistory(chat2, client2) {
   });
 }
 
+// src/ui/settings.ts
+var $5 = (id) => document.getElementById(id);
+var GROUPS = [["read", "\u0427\u0442\u0435\u043D\u0438\u0435"], ["act", "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F"], ["qa", "QA-\u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"]];
+function initSettings() {
+  const url = $5("ollamaUrl");
+  const model = $5("settingsModel");
+  const status = $5("ollamaStatus");
+  const profileList = $5("profileList");
+  const name = $5("profileName");
+  const prompt = $5("profilePrompt");
+  const error = $5("profileError");
+  const tools = $5("profileTools");
+  let profiles = [];
+  let currentId = "";
+  function setStatus(text2, state = "") {
+    status.textContent = text2;
+    status.dataset.state = state;
+  }
+  async function check() {
+    const settings = await getSettings();
+    url.value = settings.ollamaUrl;
+    setStatus("\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\u2026");
+    const result = await checkOllama(settings.ollamaUrl, settings.model);
+    const models = result.ok ? result.models : [];
+    const names = settings.model && !models.includes(settings.model) ? [settings.model, ...models] : models;
+    model.replaceChildren(...settings.model ? [] : [new Option(models.length ? "\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043C\u043E\u0434\u0435\u043B\u044C" : "\u2014", "")], ...names.map((m) => new Option(m, m)));
+    model.value = settings.model;
+    if (!result.ok) setStatus(result.error, "error");
+    else if (result.warning) setStatus(result.warning, "warning");
+    else setStatus(`\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043E, \u043C\u043E\u0434\u0435\u043B\u0435\u0439: ${models.length}`, "ok");
+  }
+  url.addEventListener("change", async () => {
+    await saveSettings({ ollamaUrl: url.value });
+    await check();
+  });
+  model.addEventListener("change", async () => {
+    await saveSettings({ model: model.value });
+    await check();
+  });
+  $5("checkOllama").addEventListener("click", () => {
+    void check();
+  });
+  const selected = () => profiles.find((p) => p.id === currentId) ?? profiles[0];
+  function renderTools(profile) {
+    const parts = [tools.querySelector("legend")];
+    for (const [group, title] of GROUPS) {
+      const heading = document.createElement("h4");
+      heading.textContent = title;
+      parts.push(heading);
+      for (const tool of TOOL_CATALOGUE.filter((t) => t.group === group)) {
+        const label = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = tool.name;
+        box.checked = profile.tools.includes(tool.name);
+        label.append(box, tool.label);
+        parts.push(label);
+      }
+    }
+    tools.replaceChildren(...parts);
+  }
+  function renderProfile() {
+    const profile = selected();
+    profileList.replaceChildren(...profiles.map((p) => new Option(p.name, p.id)));
+    profileList.value = profile.id;
+    name.value = profile.name;
+    prompt.value = profile.prompt;
+    error.hidden = true;
+    renderTools(profile);
+    $5("deleteProfile").disabled = profiles.length <= 1;
+  }
+  async function loadProfiles(selectId) {
+    profiles = await listProfiles();
+    if (selectId) currentId = selectId;
+    if (!profiles.some((p) => p.id === currentId)) currentId = profiles[0].id;
+    renderProfile();
+  }
+  async function saveProfile() {
+    const profile = selected();
+    const problem = validateProfile({ name: name.value, prompt: prompt.value });
+    error.hidden = !problem;
+    error.textContent = problem ?? "";
+    if (problem) return;
+    const checked = [...tools.querySelectorAll("input:checked")].map((b) => b.value);
+    const next = { ...profile, name: name.value.trim(), prompt: prompt.value, tools: checked };
+    profiles = profiles.map((p) => p.id === next.id ? next : p);
+    await putProfile(next);
+    profileList.selectedOptions[0].text = next.name;
+  }
+  profileList.addEventListener("change", () => {
+    currentId = profileList.value;
+    renderProfile();
+  });
+  name.addEventListener("change", () => {
+    void saveProfile();
+  });
+  prompt.addEventListener("change", () => {
+    void saveProfile();
+  });
+  tools.addEventListener("change", () => {
+    void saveProfile();
+  });
+  $5("newProfile").addEventListener("click", async () => {
+    const profile = { id: crypto.randomUUID(), name: "\u041D\u043E\u0432\u044B\u0439 \u043F\u0440\u043E\u0444\u0438\u043B\u044C", prompt: "", tools: [...DEFAULT_PROFILES[0].tools], createdAt: Date.now() };
+    await putProfile(profile);
+    await loadProfiles(profile.id);
+    name.select();
+  });
+  $5("deleteProfile").addEventListener("click", async () => {
+    const profile = selected();
+    if (!await confirmDialog(`\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043F\u0440\u043E\u0444\u0438\u043B\u044C \xAB${profile.name}\xBB?`, "\u0423\u0434\u0430\u043B\u0438\u0442\u044C")) return;
+    await deleteProfile(profile.id);
+    await loadProfiles();
+  });
+  $5("openSettings").addEventListener("click", () => {
+    void loadProfiles();
+    void check();
+  });
+}
+
 // src/ui/main.ts
 initViews();
 await openAssistantDb();
@@ -4119,3 +4290,4 @@ document.getElementById("newChat").addEventListener("click", () => {
   void chat.open(null);
 });
 initHistory(chat, client);
+initSettings();

@@ -244,3 +244,19 @@ html[data-view="chat"] .notes-only, html[data-view="notes"] .chat-only { display
 .h-row .t-more { padding: 0; }
 .h-row:hover .t-more { opacity: 1; }
 .h-empty { color: var(--muted); padding: 8px; text-align: center; }
+
+/* Settings: model and profiles */
+dialog .field { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+dialog select, dialog textarea { padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
+dialog select { flex: 1; min-width: 0; }
+dialog textarea { display: block; width: 100%; margin: 4px 0; resize: vertical; font: 12px/1.45 var(--mono); outline: none; }
+dialog textarea:focus, dialog select:focus { border-color: var(--accent); }
+dialog code { font: 11px var(--mono); background: var(--soft); padding: 0 3px; border-radius: 3px; }
+#ollamaStatus[data-state="error"], .field-error { color: var(--danger); }
+#ollamaStatus[data-state="warning"] { color: var(--text); }
+.field-error { margin: 4px 0; font-size: 12px; }
+#profileTools { margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+#profileTools legend { font-size: 12px; padding: 0 4px; }
+#profileTools h4 { margin: 6px 0 2px; font-size: 12px; }
+#profileTools label { display: inline-flex; align-items: center; gap: 4px; width: 50%; font-size: 12px; padding: 1px 0; }
+#profileTools input[type="checkbox"] { display: inline; width: auto; margin: 0; accent-color: var(--accent); }
