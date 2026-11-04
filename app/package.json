@@ -3,8 +3,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "build": "node build.mjs",
-    "serve": "node serve.mjs"
+    "build": "node build.mjs"
   },
   "dependencies": {
     "@tiptap/core": "3.31.3",
