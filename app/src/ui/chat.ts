@@ -170,7 +170,10 @@ export function initChat(client: Client): ChatView {
     if (!conversationId) { await loadProfiles(); return; }
     if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
     if (!await getConversation(conversationId)) { await open(null); return; }
-    state = {...state, messages: await listMessages(conversationId)};
+    const messages = await listMessages(conversationId);
+    // Read the state again after the awaits: a worker event may have arrived meanwhile and is newer than the database.
+    if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
+    state = {...state, messages};
     render();
   });
 

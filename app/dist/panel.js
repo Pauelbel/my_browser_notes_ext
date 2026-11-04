@@ -3978,7 +3978,9 @@ function initChat(client2) {
       await open(null);
       return;
     }
-    state = { ...state, messages: await listMessages(conversationId) };
+    const messages = await listMessages(conversationId);
+    if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
+    state = { ...state, messages };
     render();
   });
   function handle(event) {
