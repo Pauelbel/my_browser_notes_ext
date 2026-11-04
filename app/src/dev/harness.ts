@@ -29,6 +29,15 @@ const layer = {
     tools.budget = budget;
     return (tools as unknown as Record<string, (a: object) => Promise<unknown>>)[method](args);
   },
+  debug: {
+    actionable: async (tabId: number, ref: string) => (await toolsFor(tabId, 26214)).debugActionable(ref),
+  },
+  async navigate(tabId: number, url: string) { await chrome.tabs.update(tabId, {url}); },
+  async evalInTab(tabId: number, expression: string) {
+    const tools = await toolsFor(tabId, 26214);
+    const r = await tools.session.cdp.send<{result: {value: unknown}}>('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true});
+    return r.result.value;
+  },
   async done(tabId: number) {
     const tools = await open.get(tabId);
     open.delete(tabId);

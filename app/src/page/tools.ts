@@ -5,6 +5,8 @@ import {RefRegistry} from './refs.ts';
 import type {PageSession} from './session.ts';
 import {PageError} from './errors.ts';
 import type {OutlineMode, WindowMode} from './render.ts';
+import {resolveTarget} from './resolve.ts';
+import {waitActionable} from './actionability.ts';
 
 export interface ToolResult {
   text: string;
@@ -69,6 +71,18 @@ export class PageTools {
       const r = await this.observer.read({ref: args.ref, budget: this.budget});
       return pageText(r.header, r.body, r.notices);
     });
+  }
+
+  /** For the e2e harness: runs the checks before an action on a label, without acting. */
+  async debugActionable(ref: string): Promise<{ok: true; point: {x: number; y: number}; ms: number} | {ok: false; code: string; message: string; ms: number}> {
+    const started = Date.now();
+    try {
+      const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+      const {point} = await waitActionable(this.session, target, {pointer: true}, this.observer.probes);
+      return {ok: true, point, ms: Date.now() - started};
+    } catch (error) {
+      return {ok: false, code: error instanceof PageError ? error.code : 'INTERNAL', message: error instanceof Error ? error.message : String(error), ms: Date.now() - started};
+    }
   }
 
   dispose(): void {

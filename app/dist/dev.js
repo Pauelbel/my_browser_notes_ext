@@ -887,6 +887,206 @@ var RefRegistry = class {
   }
 };
 
+// src/page/resolve.ts
+var staleText = (ref, why) => `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} ${why}: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot \u0438 \u0432\u043E\u0437\u044C\u043C\u0438\u0442\u0435 \u043D\u043E\u0432\u0443\u044E \u043C\u0435\u0442\u043A\u0443.`;
+async function callOn(session, frame, objectId, fn, args = []) {
+  const r = await session.cdp.send(
+    "Runtime.callFunctionOn",
+    { objectId, functionDeclaration: fn, arguments: args, returnByValue: true, awaitPromise: true },
+    frame.sessionId
+  );
+  if (r.exceptionDetails) throw new PageError("INTERNAL", r.exceptionDetails.text);
+  return r.result.value;
+}
+async function resolveNode(session, frame, backendNodeId, probes) {
+  const executionContextId = await ensureProbe(session, frame.frameId, probes);
+  try {
+    const { object } = await session.cdp.send("DOM.resolveNode", { backendNodeId, executionContextId }, frame.sessionId);
+    return object.objectId;
+  } catch {
+    return null;
+  }
+}
+async function resolveTarget(session, refs, ref, probes) {
+  const record = refs.get(ref);
+  const frame = session.frames.get(record.frameId);
+  if (!frame || frame.loaderId !== record.loaderId) {
+    refs.invalidateFrame(record.frameId, frame?.loaderId ?? "");
+    throw new PageError("REF_STALE", staleText(ref, "\u0431\u044B\u043B \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435, \u043A\u043E\u0442\u043E\u0440\u0430\u044F \u0443\u0436\u0435 \u0441\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C"));
+  }
+  const objectId = await resolveNode(session, frame, record.backendNodeId, probes);
+  if (!objectId) throw new PageError("REF_STALE", staleText(ref, "\u0438\u0441\u0447\u0435\u0437 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B"));
+  const connected = await callOn(session, frame, objectId, "function () { return this.isConnected; }");
+  if (!connected) throw new PageError("REF_STALE", staleText(ref, "\u0438\u0441\u0447\u0435\u0437 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (\u0435\u0451 \u043F\u0435\u0440\u0435\u0440\u0438\u0441\u043E\u0432\u0430\u043B\u0438)"));
+  if (!record.proxy && record.role !== "clickable") {
+    const { nodes } = await session.cdp.send(
+      "Accessibility.getPartialAXTree",
+      { backendNodeId: record.backendNodeId, fetchRelatives: false },
+      frame.sessionId
+    );
+    const role = nodes[0]?.role?.value ?? "", name = cleanText(String(nodes[0]?.name?.value ?? ""));
+    if (role !== record.role || name !== record.name) {
+      throw new PageError("REF_STALE", staleText(ref, `\u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F (\u0431\u044B\u043B ${record.role} "${record.name}", \u0441\u0442\u0430\u043B ${role} "${name}")`));
+    }
+  }
+  return { record, frame, objectId };
+}
+
+// src/page/geometry.ts
+function quadArea(q) {
+  let area = 0;
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    area += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
+  }
+  return Math.abs(area / 2);
+}
+function visibleCenter(q, viewport) {
+  const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
+  const left = Math.max(0, Math.min(...xs)), right = Math.min(viewport.width, Math.max(...xs));
+  const top = Math.max(0, Math.min(...ys)), bottom = Math.min(viewport.height, Math.max(...ys));
+  if (right <= left || bottom <= top) return null;
+  return { x: (left + right) / 2, y: (top + bottom) / 2 };
+}
+function toParent(p, ownerContent, childViewport) {
+  const fx = p.x / Math.max(1, childViewport.width), fy = p.y / Math.max(1, childViewport.height);
+  const c = ownerContent;
+  return { x: c[0] + (c[2] - c[0]) * fx + (c[6] - c[0]) * fy, y: c[1] + (c[3] - c[1]) * fx + (c[7] - c[1]) * fy };
+}
+
+// src/page/actionability.ts
+var ACTIONABILITY_BUDGET_MS = 5e3;
+var SCHEDULE = [0, 20, 100, 100, 500];
+var STABLE_GAP_MS = 50;
+var STABLE_TOLERANCE_PX = 2;
+var TERMINAL = /* @__PURE__ */ new Set(["REF_STALE", "NOT_EDITABLE", "DETACHED", "PAGE_NOT_SUPPORTED", "REF_UNKNOWN"]);
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function scrollOffset(session, sessionId) {
+  const m = await session.cdp.send("Page.getLayoutMetrics", {}, sessionId);
+  return { x: m.cssLayoutViewport.pageX, y: m.cssLayoutViewport.pageY };
+}
+async function firstQuad(session, frame, backendNodeId) {
+  try {
+    const { quads } = await session.cdp.send("DOM.getContentQuads", { backendNodeId }, frame.sessionId);
+    return quads.find((q) => quadArea(q) > 1) ?? null;
+  } catch {
+    return null;
+  }
+}
+function sessionChain(session, frame) {
+  const chain = [];
+  let root = session.frames.sessionRoot(frame.frameId);
+  for (; ; ) {
+    const parent = root.parentFrameId ? session.frames.get(root.parentFrameId) : void 0;
+    chain.push({ root, parent });
+    if (!parent) return chain;
+    root = session.frames.sessionRoot(parent.frameId);
+  }
+}
+async function describe(session, frame, objectId) {
+  return callOn(session, frame, objectId, `function () {
+    let el = this.nodeType === 1 ? this : this.parentElement;
+    for (let n = el; n; n = n.parentElement) { const t = (n.getAttribute('aria-label') || n.innerText || '').trim(); if (t) return t.replace(/\\s+/g, ' ').slice(0, 80); }
+    return el ? el.tagName.toLowerCase() : '\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u044B\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442';
+  }`).catch(() => "\u0434\u0440\u0443\u0433\u043E\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442");
+}
+async function hitTest(session, target, local, probes) {
+  const chain = sessionChain(session, target.frame);
+  let point = local;
+  for (let level = 0; level < chain.length; level++) {
+    const { root, parent } = chain[level];
+    const offset = await scrollOffset(session, root.sessionId);
+    const hit = await session.cdp.send(
+      "DOM.getNodeForLocation",
+      { x: Math.round(point.x + offset.x), y: Math.round(point.y + offset.y), includeUserAgentShadowDOM: true, ignorePointerEventsNone: false },
+      root.sessionId
+    ).catch(() => null);
+    if (!hit) throw new PageError("NOT_VISIBLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${target.record.ref} \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 \u0442\u043E\u0447\u043A\u0435 \u043A\u043B\u0438\u043A\u0430.`);
+    const hitFrame = session.frames.get(hit.frameId) ?? root;
+    let expectedObject = target.objectId, expectedFrame = target.frame;
+    if (level > 0) {
+      const child = chain[level - 1].root;
+      const owner = await session.cdp.send("DOM.getFrameOwner", { frameId: child.frameId }, root.sessionId);
+      const ownerFrame = session.frames.get(child.parentFrameId) ?? root;
+      const ownerObject = await resolveNode(session, ownerFrame, owner.backendNodeId, probes);
+      if (!ownerObject) throw new PageError("NOT_VISIBLE", "\u0424\u0440\u0435\u0439\u043C \u0441 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u043C \u0438\u0441\u0447\u0435\u0437.");
+      expectedObject = ownerObject;
+      expectedFrame = ownerFrame;
+    }
+    const hitObject = hitFrame.frameId === expectedFrame.frameId ? await resolveNode(session, hitFrame, hit.backendNodeId, probes) : null;
+    const inside = hitObject ? await callOn(
+      session,
+      expectedFrame,
+      expectedObject,
+      "function (other) { for (let n = other; n; n = n.parentNode || n.host) if (n === this) return true; return false; }",
+      [{ objectId: hitObject }]
+    ) : false;
+    if (!inside) {
+      const blockerObject = hitObject ?? await resolveNode(session, hitFrame, hit.backendNodeId, probes);
+      const blocker = blockerObject ? await describe(session, hitFrame, blockerObject) : "\u0434\u0440\u0443\u0433\u043E\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442";
+      throw new PageError("COVERED", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${target.record.ref} \u0437\u0430\u043A\u0440\u044B\u0442 \u0434\u0440\u0443\u0433\u0438\u043C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u043C: \xAB${blocker}\xBB. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u043A\u0440\u043E\u0439\u0442\u0435 \u0438\u043B\u0438 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0435\u0433\u043E.`);
+    }
+    if (!parent) return point;
+    const { model } = await session.cdp.send(
+      "DOM.getBoxModel",
+      { backendNodeId: (await session.cdp.send("DOM.getFrameOwner", { frameId: root.frameId }, parent.sessionId)).backendNodeId },
+      parent.sessionId
+    );
+    const [width, height] = await probeEval(session, root.frameId, probes, "[innerWidth, innerHeight]");
+    point = toParent(point, model.content, { width, height });
+  }
+  return point;
+}
+async function toTop(session, frame, quad, probes) {
+  let q = quad;
+  for (const { root, parent } of sessionChain(session, frame)) {
+    if (!parent) return q;
+    const owner = await session.cdp.send("DOM.getFrameOwner", { frameId: root.frameId }, parent.sessionId);
+    const { model } = await session.cdp.send("DOM.getBoxModel", { backendNodeId: owner.backendNodeId }, parent.sessionId);
+    const [width, height] = await probeEval(session, root.frameId, probes, "[innerWidth, innerHeight]");
+    const points = [0, 1, 2, 3].map((i) => toParent({ x: q[i * 2], y: q[i * 2 + 1] }, model.content, { width, height }));
+    q = points.flatMap((p) => [p.x, p.y]);
+  }
+  return q;
+}
+async function checkOnce(session, target, needs, probes) {
+  const { frame, objectId, record } = target;
+  const connected = await callOn(session, frame, objectId, "function () { return this.isConnected; }");
+  if (!connected) throw new PageError("REF_STALE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u0438\u0441\u0447\u0435\u0437 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot.`);
+  const state = await callOn(session, frame, objectId, "function () { return __assistant.elementState(this.nodeType === 1 ? this : this.parentElement); }");
+  if (!state.visible) throw new PageError("NOT_VISIBLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u0441\u043A\u0440\u044B\u0442.`);
+  if (state.disabled) throw new PageError("NOT_ENABLED", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u043D\u0435\u0430\u043A\u0442\u0438\u0432\u0435\u043D (disabled).`);
+  if (needs.editable && (!state.editable || state.readonly)) throw new PageError("NOT_EDITABLE", `\u0412 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u043D\u0435\u043B\u044C\u0437\u044F \u0432\u0432\u043E\u0434\u0438\u0442\u044C \u0442\u0435\u043A\u0441\u0442.`);
+  await session.cdp.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: record.backendNodeId }, frame.sessionId).catch(() => {
+  });
+  const first = await firstQuad(session, frame, record.backendNodeId);
+  if (!first) throw new PageError("NOT_VISIBLE", `\u0423 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${record.ref} \u043D\u0435\u0442 \u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u043E\u0431\u043B\u0430\u0441\u0442\u0438.`);
+  await sleep(STABLE_GAP_MS);
+  const second = await firstQuad(session, frame, record.backendNodeId);
+  if (!second || first.some((v, i) => Math.abs(v - second[i]) > STABLE_TOLERANCE_PX)) {
+    throw new PageError("NOT_STABLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u0435\u0449\u0451 \u0434\u0432\u0438\u0433\u0430\u0435\u0442\u0441\u044F.`);
+  }
+  const root = session.frames.sessionRoot(frame.frameId);
+  const [width, height] = await probeEval(session, root.frameId, probes, "[document.documentElement.clientWidth || innerWidth, document.documentElement.clientHeight || innerHeight]");
+  const local = visibleCenter(second, { width, height });
+  if (!local) throw new PageError("NOT_VISIBLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${record.ref} \u0437\u0430 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u043C\u0438 \u044D\u043A\u0440\u0430\u043D\u0430.`);
+  const point = needs.pointer ? await hitTest(session, target, local, probes) : local;
+  return { point, quad: await toTop(session, frame, second, probes) };
+}
+async function waitActionable(session, target, needs, probes) {
+  const started = performance.now();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await checkOnce(session, target, needs, probes);
+    } catch (error) {
+      if (!(error instanceof PageError) || TERMINAL.has(error.code)) throw error;
+      const wait = SCHEDULE[Math.min(attempt + 1, SCHEDULE.length - 1)];
+      if (performance.now() - started + wait > ACTIONABILITY_BUDGET_MS) throw error;
+      await sleep(wait);
+    }
+  }
+}
+
 // src/page/tools.ts
 var PAGE_START = "<<<page-content>>>";
 var PAGE_END = "<<<end-page-content>>>";
@@ -939,6 +1139,17 @@ var PageTools = class {
       return pageText(r.header, r.body, r.notices);
     });
   }
+  /** For the e2e harness: runs the checks before an action on a label, without acting. */
+  async debugActionable(ref) {
+    const started = Date.now();
+    try {
+      const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+      const { point } = await waitActionable(this.session, target, { pointer: true }, this.observer.probes);
+      return { ok: true, point, ms: Date.now() - started };
+    } catch (error) {
+      return { ok: false, code: error instanceof PageError ? error.code : "INTERNAL", message: error instanceof Error ? error.message : String(error), ms: Date.now() - started };
+    }
+  }
   dispose() {
     this.observer.network.stop();
   }
@@ -974,6 +1185,17 @@ var layer = {
     const tools = await toolsFor(tabId, budget);
     tools.budget = budget;
     return tools[method](args);
+  },
+  debug: {
+    actionable: async (tabId, ref) => (await toolsFor(tabId, 26214)).debugActionable(ref)
+  },
+  async navigate(tabId, url) {
+    await chrome.tabs.update(tabId, { url });
+  },
+  async evalInTab(tabId, expression) {
+    const tools = await toolsFor(tabId, 26214);
+    const r = await tools.session.cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    return r.result.value;
   },
   async done(tabId) {
     const tools = await open.get(tabId);
