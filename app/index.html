@@ -7,13 +7,19 @@
 <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
 <link rel="stylesheet" href="style.css">
 <script src="zoom.js"></script>
+<script src="view-init.js"></script>
 </head>
 <body>
 <header id="topbar" role="toolbar" aria-label="Управление">
   <div class="tb-left">
-    <button id="toggleSidebar" data-icon="menu" data-tip="Показать/скрыть список" aria-label="Показать/скрыть список"></button>
-    <button id="newNote" data-icon="notePlus" data-tip="Новая заметка" aria-label="Новая заметка"></button>
-    <button id="newFolder" data-icon="folderPlus" data-tip="Новая папка" aria-label="Новая папка"></button>
+    <button data-view-button="chat" data-icon="chat" data-tip="Чат" aria-label="Чат" aria-pressed="false"></button>
+    <button data-view-button="notes" data-icon="notes" data-tip="Заметки" aria-label="Заметки" aria-pressed="false"></button>
+    <span class="fsep"></span>
+    <button id="openHistory" class="chat-only" data-icon="history" data-tip="Недавние чаты" aria-label="Недавние чаты" aria-haspopup="true" aria-expanded="false"></button>
+    <button id="newChat" class="chat-only" data-icon="newChat" data-tip="Новый чат" aria-label="Новый чат"></button>
+    <button id="toggleSidebar" class="notes-only" data-icon="menu" data-tip="Показать/скрыть список" aria-label="Показать/скрыть список"></button>
+    <button id="newNote" class="notes-only" data-icon="notePlus" data-tip="Новая заметка" aria-label="Новая заметка"></button>
+    <button id="newFolder" class="notes-only" data-icon="folderPlus" data-tip="Новая папка" aria-label="Новая папка"></button>
   </div>
   <div class="tb-spacer"></div>
   <div class="tb-right">
@@ -24,7 +30,20 @@
 <div id="tablePicker" class="popover" hidden><div class="table-size">Таблица</div><div class="table-grid"></div></div>
 <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
 
-<div id="app">
+<main id="chat" class="chat-only" aria-label="Чат">
+  <div id="transcript"></div>
+  <form id="composer">
+    <textarea id="prompt" rows="3" placeholder="Спросите что-нибудь…" aria-label="Сообщение"></textarea>
+    <div class="composer-row">
+      <select id="profileSelect" aria-label="Профиль" data-tip="Профиль"></select>
+      <select id="modelSelect" aria-label="Модель" data-tip="Модель"></select>
+      <span class="tb-spacer"></span>
+      <button id="sendButton" type="submit" data-icon="send" data-tip="Отправить (Enter)" aria-label="Отправить"></button>
+    </div>
+  </form>
+</main>
+
+<div id="app" class="notes-only">
   <aside id="sidebar" aria-label="Заметки">
     <input id="search" type="search" placeholder="найти заметку…" aria-label="Поиск" autocomplete="off">
     <div id="tree" role="tree"></div>

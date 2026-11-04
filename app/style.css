@@ -186,3 +186,43 @@ dialog .danger { border-color: var(--danger); }
   #resizer { display: none; }
   #note { padding: 8px 12px 0; }
 }
+
+/* Views: Chat and Notes. html[data-view] is set by view-init.js before the first paint. */
+html[data-view="chat"] .notes-only, html[data-view="notes"] .chat-only { display: none !important; }
+#topbar button[aria-pressed="true"] { color: var(--accent); background: var(--hover); }
+#topbar .fsep { margin: 0 3px; }
+
+/* Chat */
+#chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 10px; }
+.chat-empty { margin: auto; color: var(--muted); text-align: center; max-width: 280px; }
+.msg { max-width: 100%; overflow-wrap: anywhere; font: 14px/1.55 var(--sans); }
+.msg.user { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 10px 10px 2px 10px; background: var(--soft); border: 1px solid var(--line); white-space: pre-wrap; }
+.msg.assistant { align-self: stretch; }
+.msg .md > :first-child { margin-top: 0; }
+.msg .md > :last-child { margin-bottom: 0; }
+.msg .md p { margin: .3em 0 .6em; }
+.msg .md ul, .msg .md ol { padding-left: 22px; margin: .3em 0 .6em; }
+.msg .md code { font: .88em var(--mono); background: var(--soft); padding: 1px 4px; border-radius: 3px; }
+.msg .md pre { background: var(--soft); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+.msg .md pre code { background: none; padding: 0; }
+.msg .md a { color: var(--accent); }
+.msg .md table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; }
+.msg .md td, .msg .md th { border: 1px solid var(--line); padding: 4px 8px; }
+.msg .md blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.reasoning { margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.reasoning summary { cursor: pointer; user-select: none; }
+.reasoning-text { white-space: pre-wrap; padding: 4px 0 0 12px; border-left: 2px solid var(--line); margin-top: 4px; }
+.msg-status { color: var(--muted); font: 11px var(--mono); }
+.msg-status:empty { display: none; }
+.msg.streaming .msg-status { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+.msg-error { margin-top: 4px; padding: 6px 10px; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 13px; }
+
+#composer { flex-shrink: 0; margin: 0 10px 10px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--side); }
+#composer:focus-within { border-color: var(--accent); }
+#prompt { display: block; width: 100%; resize: none; border: 0; outline: none; background: none; color: var(--text); font: 14px/1.45 var(--sans); padding: 2px 4px; max-height: 40vh; field-sizing: content; min-height: 3lh; }
+.composer-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.composer-row select { min-width: 0; max-width: 45%; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: 12px var(--mono); }
+#sendButton { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--accent); color: var(--on-accent); flex-shrink: 0; }
+#sendButton:disabled { opacity: .4; }
