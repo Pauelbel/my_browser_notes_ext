@@ -1,11 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Заметки",
-  "version": "1.0.0",
+  "name": "Помощник",
+  "version": "2.0.0",
   "minimum_chrome_version": "128",
-  "description": "Личные Markdown-заметки: папки, теги, поиск, резервная копия на диск.",
+  "description": "ИИ-помощник в боковой панели на локальных моделях Ollama, с Markdown-заметками.",
   "permissions": [
-    "sidePanel"
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",
@@ -14,7 +19,7 @@
     "128": "icons/icon-128.png"
   },
   "action": {
-    "default_title": "Открыть заметки",
+    "default_title": "Открыть помощника",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -26,7 +31,7 @@
     "default_path": "index.html?view=panel"
   },
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "dist/background.js",
     "type": "module"
   },
   "options_page": "index.html"
