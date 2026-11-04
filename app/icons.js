@@ -8,7 +8,7 @@ export const icons = {
   trash:svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
   bold:svg('<path d="M7 5h6a3.5 3.5 0 0 1 0 7H7zM7 12h7a3.5 3.5 0 0 1 0 7H7z"/>'),
   italic:svg('<path d="M19 4h-9M14 20H5M15 4 9 20"/>'),
-  heading:svg('<path d="M4 6v12M12 6v12M4 12h8M16 11l3-2v9"/>'),
+  heading:svg('<path d="M4 6v12M12 6v12M4 12h8M16 11.5a2 2 0 1 1 3.5 1.3L16 18h4"/>'),
   bulletList:svg('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6"/><circle cx="4.5" cy="12" r=".6"/><circle cx="4.5" cy="18" r=".6"/>'),
   orderedList:svg('<path d="M10 6h10M10 12h10M10 18h10M4 4h1v5M4 9h2M4 14.5a1.2 1.2 0 0 1 2 1L4 19h2.4"/>'),
   taskList:svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="m4.5 7 1.2 1.2L8 5.8M13 7h8M13 17h8"/><rect x="3" y="14" width="6" height="6" rx="1"/>'),

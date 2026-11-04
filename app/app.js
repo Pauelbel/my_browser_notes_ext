@@ -104,13 +104,33 @@ function save() {
     if (snap === lastSaved) return;
     const saved = await putNote(note);
     if (current === note) { lastSaved = snap; note.updated = saved.updated; setSaveState('saved', saved.updated); }
+    if (pref('draft', null)?.id === saved.id) setPref('draft', null);
     const index = data.notes.findIndex(n => n.id === saved.id);
     if (index >= 0) data.notes[index] = saved; else data.notes.push(saved);
     renderTree();
   });
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden && dirty()) save().catch(fail); });
-addEventListener('pagehide', () => { if (dirty()) save().catch(fail); });
+// An IndexedDB write started while the page unloads gets aborted, so unsaved edits are also
+// stashed synchronously in localStorage and written to the database on the next start.
+function stash() {
+  if (!dirty()) return;
+  if (bodyDirty) { current.body = editor.getMarkdown(); bodyDirty = false; }
+  setPref('draft', {...current, stashed:Date.now()});
+  save().catch(fail);
+}
+async function restoreDraft() {
+  const draft = pref('draft', null);
+  if (!draft) return;
+  const stored = data.notes.find(n => n.id === draft.id);
+  if (stored && draft.stashed > stored.updated) {
+    const {stashed, ...note} = draft;
+    const saved = await putNote(note);
+    data.notes = data.notes.map(n => n.id === saved.id ? saved : n);
+  }
+  setPref('draft', null);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) stash(); });
+addEventListener('pagehide', stash);
 
 // ——— Note ———
 
@@ -517,6 +537,7 @@ $('sideRight').onclick = () => { setPref('side', 'right'); renderSide(); };
 const tabs = globalThis.chrome?.tabs;
 $('openTab').hidden = !tabs || !inPanel;
 $('chromePanel').hidden = !tabs;
+$('openTab').closest('section').hidden = $('openTab').hidden && $('chromePanel').hidden;
 $('openTab').onclick = () => tabs.create({url:chrome.runtime.getURL('index.html')});
 $('chromePanel').onclick = () => tabs.create({url:'chrome://settings/appearance'});
 
@@ -540,6 +561,7 @@ setSidebar(narrow.matches ? false : !pref('collapsed', false));
 try {
   await open();
   data = await loadAll();
+  await restoreDraft();
   const last = data.notes.find(n => n.id === pref('last', null)) || flatNotes()[0];
   if (last) { reveal(last.folderId); showNote(last); } else showEmpty();
   renderTree();
