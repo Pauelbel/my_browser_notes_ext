@@ -9,6 +9,8 @@ export interface FrameCapture {
   parentFrameId?: string;
   url: string;
   loaderId: string;
+  /** The iframe element that holds this frame, in its parent's session; absent for the main frame. */
+  ownerBackendNodeId?: number;
   nodes: AXNode[];
   status: 'captured' | 'failed';
   reason?: string;
@@ -41,7 +43,13 @@ export async function capture(session: PageSession): Promise<Capture> {
     const base = {frameId: frame.frameId, sessionId: frame.sessionId, parentFrameId: frame.parentFrameId, url: frame.url, loaderId: frame.loaderId};
     try {
       const {nodes} = await cdp.send<{nodes: AXNode[]}>('Accessibility.getFullAXTree', {frameId: frame.frameId}, frame.sessionId, COMMAND_TIMEOUT_MS);
-      return {...base, nodes, status: 'captured' as const};
+      let ownerBackendNodeId: number | undefined;
+      if (frame.parentFrameId) {
+        const parent = frames.get(frame.parentFrameId);
+        ownerBackendNodeId = await cdp.send<{backendNodeId: number}>('DOM.getFrameOwner', {frameId: frame.frameId}, parent?.sessionId, COMMAND_TIMEOUT_MS)
+          .then(r => r.backendNodeId, () => undefined);
+      }
+      return {...base, ownerBackendNodeId, nodes, status: 'captured' as const};
     } catch (error) {
       return {...base, nodes: [], status: 'failed' as const, reason: error instanceof Error ? error.message : String(error)};
     }

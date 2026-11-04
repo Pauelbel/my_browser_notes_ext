@@ -291,7 +291,12 @@ async function capture(session) {
     const base = { frameId: frame.frameId, sessionId: frame.sessionId, parentFrameId: frame.parentFrameId, url: frame.url, loaderId: frame.loaderId };
     try {
       const { nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId: frame.frameId }, frame.sessionId, COMMAND_TIMEOUT_MS);
-      return { ...base, nodes, status: "captured" };
+      let ownerBackendNodeId;
+      if (frame.parentFrameId) {
+        const parent = frames.get(frame.parentFrameId);
+        ownerBackendNodeId = await cdp.send("DOM.getFrameOwner", { frameId: frame.frameId }, parent?.sessionId, COMMAND_TIMEOUT_MS).then((r) => r.backendNodeId, () => void 0);
+      }
+      return { ...base, ownerBackendNodeId, nodes, status: "captured" };
     } catch (error) {
       return { ...base, nodes: [], status: "failed", reason: error instanceof Error ? error.message : String(error) };
     }
