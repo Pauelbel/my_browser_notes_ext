@@ -12,6 +12,8 @@ import {click, hover, pressKey, wheel, watchDialog, KEYS, type DialogInfo, type 
 import {focusTarget, isChecked, isSelect, selectOption, typeInto} from './act.ts';
 import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
+import {waitForReady} from './readiness.ts';
+import type {ONode} from './outline.ts';
 
 export interface ToolResult {
   text: string;
@@ -19,6 +21,20 @@ export interface ToolResult {
 }
 
 export const PAGE_START = '<<<page-content>>>';
+const NAVIGATION_TIMEOUT_MS = 15000;
+const WAIT_POLL_MS = 250;
+const fold = (s: string) => s.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+const flat = (nodes: ONode[]): ONode[] => nodes.flatMap(n => [n, ...flat(n.children)]);
+
+/** Adds https:// to a bare address; refuses schemes that are not web pages. */
+export function normalizeUrl(input: string): string {
+  const url = input.trim();
+  if (!url) throw new PageError('NOT_FOUND', 'Не указан адрес.');
+  if (/^(javascript|file|chrome|chrome-extension|chrome-untrusted|devtools|view-source|data|about|blob):/i.test(url)) {
+    throw new PageError('PAGE_NOT_SUPPORTED', `Адрес ${url.slice(0, 60)} не открывается помощником: только обычные страницы http и https.`);
+  }
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
 export const PAGE_END = '<<<end-page-content>>>';
 
 export function pageText(head: string, body: string, notices: string[], before = ''): string {
@@ -200,6 +216,79 @@ export class PageTools {
       await new Promise(r => setTimeout(r, 400));
       const o = await this.observer.snapshot({budget: this.budget});
       return `${what}: прокручено · ${o.header}`;
+    });
+  }
+
+  navigate(args: {url?: string; action?: 'back' | 'forward' | 'reload'}): Promise<ToolResult> {
+    return this.run(async () => {
+      const {cdp} = this.session;
+      let what: string;
+      let status: number | undefined;
+      const mainId = this.session.frames.main().frameId;
+      let done!: () => void;
+      const arrived = new Promise<void>(r => { done = r; });
+      const off = cdp.on((method, params, sessionId) => {
+        if (sessionId) return;
+        if (method === 'Network.responseReceived' && params.type === 'Document' && params.frameId === mainId) status = params.response.status;
+        if (method === 'Page.loadEventFired') done();
+      });
+      try {
+        if (args.action === 'back' || args.action === 'forward') {
+          const {currentIndex, entries} = await cdp.send<{currentIndex: number; entries: {id: number; url: string}[]}>('Page.getNavigationHistory');
+          const entry = entries[currentIndex + (args.action === 'back' ? -1 : 1)];
+          if (!entry) throw new PageError('NOT_FOUND', args.action === 'back' ? 'Назад некуда: это первая страница в истории вкладки.' : 'Вперёд некуда.');
+          what = args.action === 'back' ? 'назад' : 'вперёд';
+          // A page restored from the back-forward cache fires no load event; its navigation is enough.
+          const restored = cdp.on((method, params, sessionId) => { if (!sessionId && method === 'Page.frameNavigated' && !params.frame.parentId) setTimeout(done, 300); });
+          await cdp.send('Page.navigateToHistoryEntry', {entryId: entry.id});
+          await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
+          restored();
+        } else if (args.action === 'reload') {
+          what = 'обновление';
+          await cdp.send('Page.reload', {});
+          await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
+        } else {
+          const url = normalizeUrl(args.url ?? '');
+          what = `переход на ${url}`;
+          const r = await cdp.send<{errorText?: string}>('Page.navigate', {url});
+          if (r.errorText) throw new PageError('NOT_FOUND', `Не удалось открыть ${url}: ${r.errorText}.`);
+          await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
+        }
+      } finally {
+        off();
+      }
+      const o = await this.observer.snapshot({budget: this.budget});
+      return `${what}: ${status ? `HTTP ${status} · ` : ''}${o.header}\nСделайте snapshot, чтобы увидеть элементы страницы.`;
+    });
+  }
+
+  wait(args: {text?: string; ref?: string; gone?: boolean; timeoutMs?: number}): Promise<ToolResult> {
+    return this.run(async () => {
+      const timeout = Math.min(30000, Math.max(100, args.timeoutMs ?? 5000));
+      if (!args.text && !args.ref) {
+        const r = await waitForReady(this.session, this.observer.network, this.observer.probes, timeout);
+        if (!r.ready) throw new PageError('TIMEOUT', `Страница не успокоилась за ${timeout} мс (${r.reason}).`);
+        return `страница готова за ${r.waitedMs} мс`;
+      }
+      const record = args.ref ? this.refs.get(args.ref) : undefined;
+      const want = args.text ? fold(args.text) : '';
+      const started = Date.now();
+      for (;;) {
+        const {roots} = await this.observer.quick();
+        const nodes = flat(roots);
+        const present = record
+          ? nodes.some(n => n.backendNodeId === record.backendNodeId && n.loaderId === record.loaderId)
+          : nodes.some(n => fold(`${n.name} ${n.value ?? ''}`).includes(want));
+        if (present !== Boolean(args.gone)) {
+          const subject = args.text ? `текст «${args.text}»` : `элемент ${args.ref}`;
+          return `${subject} ${args.gone ? 'исчез' : 'появился'} через ${Date.now() - started} мс`;
+        }
+        if (Date.now() - started >= timeout) {
+          const subject = args.text ? `текста «${args.text}»` : `элемента ${args.ref}`;
+          throw new PageError('TIMEOUT', `Не дождался ${args.gone ? 'исчезновения' : 'появления'} ${subject} за ${timeout} мс.`);
+        }
+        await new Promise(r => setTimeout(r, WAIT_POLL_MS));
+      }
     });
   }
 

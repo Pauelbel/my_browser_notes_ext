@@ -47,6 +47,12 @@ export class Observer {
     return {capture: raw, roots, notices};
   }
 
+  /** A capture without waiting for the page to settle, for polling. */
+  async quick(): Promise<{capture: Capture; roots: ONode[]}> {
+    const raw = await capture(this.session);
+    return {capture: raw, roots: buildOutline(raw).roots};
+  }
+
   async snapshot(opts: {mode?: OutlineMode; window?: WindowMode; budget: number}): Promise<Observation> {
     const {capture: raw, roots, notices} = await this.observe();
     const rendered = render(roots, this.refs, {mode: opts.mode ?? 'interactive', window: opts.window ?? 'near', budget: opts.budget, viewport: raw.viewport});

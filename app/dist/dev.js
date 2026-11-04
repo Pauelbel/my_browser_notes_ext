@@ -782,6 +782,11 @@ var Observer = class {
     if (!ready.ready) notices.unshift(`\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u0443\u0441\u043F\u043E\u043A\u043E\u0438\u043B\u0430\u0441\u044C \u0437\u0430 ${Math.round(ready.waitedMs / 1e3)} \u0441 (${ready.reason}): \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043C\u043E\u0436\u0435\u0442 \u0431\u044B\u0442\u044C \u043D\u0435\u043F\u043E\u043B\u043D\u044B\u043C.`);
     return { capture: raw, roots, notices };
   }
+  /** A capture without waiting for the page to settle, for polling. */
+  async quick() {
+    const raw = await capture(this.session);
+    return { capture: raw, roots: buildOutline(raw).roots };
+  }
   async snapshot(opts) {
     const { capture: raw, roots, notices } = await this.observe();
     const rendered = render(roots, this.refs, { mode: opts.mode ?? "interactive", window: opts.window ?? "near", budget: opts.budget, viewport: raw.viewport });
@@ -1313,6 +1318,18 @@ function renderDiff(d, max = 30) {
 
 // src/page/tools.ts
 var PAGE_START = "<<<page-content>>>";
+var NAVIGATION_TIMEOUT_MS = 15e3;
+var WAIT_POLL_MS = 250;
+var fold2 = (s) => s.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
+var flat = (nodes) => nodes.flatMap((n) => [n, ...flat(n.children)]);
+function normalizeUrl(input) {
+  const url = input.trim();
+  if (!url) throw new PageError("NOT_FOUND", "\u041D\u0435 \u0443\u043A\u0430\u0437\u0430\u043D \u0430\u0434\u0440\u0435\u0441.");
+  if (/^(javascript|file|chrome|chrome-extension|chrome-untrusted|devtools|view-source|data|about|blob):/i.test(url)) {
+    throw new PageError("PAGE_NOT_SUPPORTED", `\u0410\u0434\u0440\u0435\u0441 ${url.slice(0, 60)} \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C: \u0442\u043E\u043B\u044C\u043A\u043E \u043E\u0431\u044B\u0447\u043D\u044B\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B http \u0438 https.`);
+  }
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
 var PAGE_END = "<<<end-page-content>>>";
 function pageText(head, body, notices, before = "") {
   return [before, head, PAGE_START, body, PAGE_END, ...notices].filter(Boolean).join("\n");
@@ -1494,6 +1511,79 @@ ${diff}` : head;
       await new Promise((r) => setTimeout(r, 400));
       const o = await this.observer.snapshot({ budget: this.budget });
       return `${what}: \u043F\u0440\u043E\u043A\u0440\u0443\u0447\u0435\u043D\u043E \xB7 ${o.header}`;
+    });
+  }
+  navigate(args) {
+    return this.run(async () => {
+      const { cdp } = this.session;
+      let what;
+      let status;
+      const mainId = this.session.frames.main().frameId;
+      let done;
+      const arrived = new Promise((r) => {
+        done = r;
+      });
+      const off = cdp.on((method, params, sessionId) => {
+        if (sessionId) return;
+        if (method === "Network.responseReceived" && params.type === "Document" && params.frameId === mainId) status = params.response.status;
+        if (method === "Page.loadEventFired") done();
+      });
+      try {
+        if (args.action === "back" || args.action === "forward") {
+          const { currentIndex, entries } = await cdp.send("Page.getNavigationHistory");
+          const entry = entries[currentIndex + (args.action === "back" ? -1 : 1)];
+          if (!entry) throw new PageError("NOT_FOUND", args.action === "back" ? "\u041D\u0430\u0437\u0430\u0434 \u043D\u0435\u043A\u0443\u0434\u0430: \u044D\u0442\u043E \u043F\u0435\u0440\u0432\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0432 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0432\u043A\u043B\u0430\u0434\u043A\u0438." : "\u0412\u043F\u0435\u0440\u0451\u0434 \u043D\u0435\u043A\u0443\u0434\u0430.");
+          what = args.action === "back" ? "\u043D\u0430\u0437\u0430\u0434" : "\u0432\u043F\u0435\u0440\u0451\u0434";
+          const restored = cdp.on((method, params, sessionId) => {
+            if (!sessionId && method === "Page.frameNavigated" && !params.frame.parentId) setTimeout(done, 300);
+          });
+          await cdp.send("Page.navigateToHistoryEntry", { entryId: entry.id });
+          await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
+          restored();
+        } else if (args.action === "reload") {
+          what = "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435";
+          await cdp.send("Page.reload", {});
+          await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
+        } else {
+          const url = normalizeUrl(args.url ?? "");
+          what = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${url}`;
+          const r = await cdp.send("Page.navigate", { url });
+          if (r.errorText) throw new PageError("NOT_FOUND", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C ${url}: ${r.errorText}.`);
+          await Promise.race([arrived, new Promise((r2) => setTimeout(r2, NAVIGATION_TIMEOUT_MS))]);
+        }
+      } finally {
+        off();
+      }
+      const o = await this.observer.snapshot({ budget: this.budget });
+      return `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
+\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`;
+    });
+  }
+  wait(args) {
+    return this.run(async () => {
+      const timeout = Math.min(3e4, Math.max(100, args.timeoutMs ?? 5e3));
+      if (!args.text && !args.ref) {
+        const r = await waitForReady(this.session, this.observer.network, this.observer.probes, timeout);
+        if (!r.ready) throw new PageError("TIMEOUT", `\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u0443\u0441\u043F\u043E\u043A\u043E\u0438\u043B\u0430\u0441\u044C \u0437\u0430 ${timeout} \u043C\u0441 (${r.reason}).`);
+        return `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0433\u043E\u0442\u043E\u0432\u0430 \u0437\u0430 ${r.waitedMs} \u043C\u0441`;
+      }
+      const record = args.ref ? this.refs.get(args.ref) : void 0;
+      const want = args.text ? fold2(args.text) : "";
+      const started = Date.now();
+      for (; ; ) {
+        const { roots } = await this.observer.quick();
+        const nodes = flat(roots);
+        const present = record ? nodes.some((n) => n.backendNodeId === record.backendNodeId && n.loaderId === record.loaderId) : nodes.some((n) => fold2(`${n.name} ${n.value ?? ""}`).includes(want));
+        if (present !== Boolean(args.gone)) {
+          const subject = args.text ? `\u0442\u0435\u043A\u0441\u0442 \xAB${args.text}\xBB` : `\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref}`;
+          return `${subject} ${args.gone ? "\u0438\u0441\u0447\u0435\u0437" : "\u043F\u043E\u044F\u0432\u0438\u043B\u0441\u044F"} \u0447\u0435\u0440\u0435\u0437 ${Date.now() - started} \u043C\u0441`;
+        }
+        if (Date.now() - started >= timeout) {
+          const subject = args.text ? `\u0442\u0435\u043A\u0441\u0442\u0430 \xAB${args.text}\xBB` : `\u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${args.ref}`;
+          throw new PageError("TIMEOUT", `\u041D\u0435 \u0434\u043E\u0436\u0434\u0430\u043B\u0441\u044F ${args.gone ? "\u0438\u0441\u0447\u0435\u0437\u043D\u043E\u0432\u0435\u043D\u0438\u044F" : "\u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F"} ${subject} \u0437\u0430 ${timeout} \u043C\u0441.`);
+        }
+        await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
+      }
     });
   }
   handleDialog(args) {
