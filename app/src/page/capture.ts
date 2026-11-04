@@ -34,10 +34,19 @@ export async function capture(session: PageSession): Promise<Capture> {
   const list = frames.list().filter(f => f.url && !f.url.startsWith('about:blank') || !f.parentFrameId);
   const sessions = [...new Set(list.map(f => f.sessionId ?? ''))];
 
-  const layoutPromise = Promise.all(sessions.map(async key => {
+  // Each session's snapshot stands alone: one slow out-of-process frame must not take layout (and masking) from the page.
+  const layoutPromise = Promise.allSettled(sessions.map(async key => {
     const snapshot = await cdp.send('DOMSnapshot.captureSnapshot', {computedStyles: LAYOUT_STYLES, includeDOMRects: true}, key || undefined, COMMAND_TIMEOUT_MS);
     return [key, snapshot] as const;
-  })).then(entries => ({layout: Object.fromEntries(entries)}), error => ({layout: {}, layoutError: error instanceof Error ? error.message : String(error)}));
+  })).then(results => {
+    const layout: Record<string, unknown> = {};
+    const errors: string[] = [];
+    for (const r of results) {
+      if (r.status === 'fulfilled') layout[r.value[0]] = r.value[1];
+      else errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+    }
+    return {layout, layoutError: errors.length ? errors.join('; ') : undefined};
+  });
 
   const captured: FrameCapture[] = await Promise.all(list.map(async frame => {
     const base = {frameId: frame.frameId, sessionId: frame.sessionId, parentFrameId: frame.parentFrameId, url: frame.url, loaderId: frame.loaderId};

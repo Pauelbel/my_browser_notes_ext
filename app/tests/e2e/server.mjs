@@ -11,6 +11,7 @@ const TYPES = {'.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': '
 function handler(request, response) {
   const url = new URL(request.url, 'http://x');
   if (url.pathname === '/missing') { response.writeHead(404, {'content-type': 'text/html; charset=utf-8'}); response.end('<h1>Нет такой страницы</h1>'); return; }
+  if (url.pathname === '/nocontent') { response.writeHead(204); response.end(); return; }
   if (url.pathname === '/slow') {
     setTimeout(() => { response.writeHead(200, {'content-type': 'text/plain'}); response.end('ok'); }, Number(url.searchParams.get('ms') ?? 1000));
     return;

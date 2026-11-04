@@ -1,7 +1,10 @@
 // What changed between two descriptions of a page, line by line (indentation ignored), for action receipts.
 
+/** Focus moves with every click; on its own it is not a change worth reporting. */
+const unfocused = (line: string) => line.trim().replace(/ \(focused\)$/, '').replace(/, focused\)$/, ')').replace(/\(focused, /, '(');
+
 export function diffLines(prev: string[], next: string[]): {added: string[]; removed: string[]} {
-  const a = prev.map(l => l.trim()), b = next.map(l => l.trim());
+  const a = prev.map(unfocused), b = next.map(unfocused);
   // Longest common subsequence table; descriptions are a few hundred lines, so O(n·m) is fine.
   const dp: number[][] = Array.from({length: a.length + 1}, () => new Array(b.length + 1).fill(0));
   for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {

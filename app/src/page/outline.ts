@@ -152,8 +152,10 @@ function buildFrame(frame: FrameCapture, offsetY: number, ctx: Context): ONode[]
       && !['html', 'body'].includes(own?.tag ?? '') && !hasInteractive(children);
 
     if (becomesClickable) {
-      const text = (name || textOf(children)).slice(0, CLICKABLE_NAME_MAX);
-      return [{...base(ax), kind: 'element', role: 'clickable', name: text, states: [], children: [], interactive: true, y: yOf(own)}];
+      // The name is short for the label line; the full text stays as children, so reading the page loses nothing.
+      const full = name || textOf(children);
+      const short = full.length > CLICKABLE_NAME_MAX ? `${full.slice(0, CLICKABLE_NAME_MAX - 1).trimEnd()}…` : full;
+      return [{...base(ax), kind: 'element', role: 'clickable', name: short, states: [], children: tidy(children, short), interactive: true, y: yOf(own)}];
     }
 
     const node: ONode = {...base(ax), kind: 'element', role, name, states: states(ax), children, interactive: interactiveRole, y: yOf(own)};
@@ -167,7 +169,8 @@ function buildFrame(frame: FrameCapture, offsetY: number, ctx: Context): ONode[]
     if (VALUE_ROLES.has(role)) {
       node.children = [];
       const value = valueOf(ax);
-      if (TEXT_FIELDS.has(role) && own && isSecretField(own.attrs)) {
+      // Without layout the field's attributes are unknown: its value is masked rather than risked.
+      if (TEXT_FIELDS.has(role) && (!own || isSecretField(own.attrs))) {
         node.masked = true;
         node.value = value ? MASK : undefined;
       } else if (value !== undefined) {

@@ -17,9 +17,12 @@ export function watchDialog(session: PageSession): {opened: Promise<DialogInfo>;
 }
 
 async function sendRaced(session: PageSession, method: string, params: object, dialog: Promise<DialogInfo>): Promise<{dialog?: DialogInfo}> {
-  const command = session.cdp.send(method, params);
-  command.catch(() => {});
-  return Promise.race([command.then(() => ({})), dialog.then(d => ({dialog: d}))]);
+  // A dialog makes the CDP client reject the waiting command with DIALOG_OPEN; that is the dialog, not a failure.
+  const command = session.cdp.send(method, params).then(() => ({}), error => {
+    if (error?.code === 'DIALOG_OPEN') return dialog.then(d => ({dialog: d}));
+    throw error;
+  });
+  return Promise.race([command, dialog.then(d => ({dialog: d}))]);
 }
 
 export async function click(session: PageSession, point: Point, dialog: Promise<DialogInfo>, count = 1): Promise<{dialog?: DialogInfo}> {

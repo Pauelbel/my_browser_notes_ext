@@ -59,8 +59,10 @@ export async function waitForReady(session: PageSession, network: NetworkTracker
     let readyState = 'loading', mutations = 0;
     try {
       [readyState, mutations] = await probeEval<[string, number]>(session, main.frameId, probes, '[__assistant.readyState(), __assistant.mutations()]');
-    } catch {
-      // The document is being replaced; try again on the next round.
+    } catch (error) {
+      // A dialog or a lost debugger will not pass by waiting; anything else is a document being replaced.
+      const code = (error as {code?: string})?.code;
+      if (code === 'DIALOG_OPEN' || code === 'DETACHED') throw error;
     }
     if (mutations !== lastMutations) { lastMutations = mutations; mutationsStableSince = Date.now(); }
     const waited = Date.now() - started;

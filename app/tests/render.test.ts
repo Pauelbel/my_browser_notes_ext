@@ -87,3 +87,7 @@ test('diffLines и renderDiff', () => {
   assert.match(renderDiff(big), /сильно изменилась \(40 строк\)/);
   assert.equal(renderDiff({added: [], removed: []}), '');
 });
+
+test('diffLines не считает изменением одну только смену фокуса', () => {
+  assert.deepEqual(diffLines(['[a1] link "x"', '[a2] button "y" (disabled)'], ['[a1] link "x" (focused)', '[a2] button "y" (disabled, focused)']), {added: [], removed: []});
+});

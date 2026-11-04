@@ -39,10 +39,21 @@ async function attachTab(tabId, api = chrome.debugger) {
     }
   }
   const handlers = /* @__PURE__ */ new Set();
+  let dialog = null;
+  const waiting = /* @__PURE__ */ new Set();
   const detachCallbacks = [];
   let detached = null;
   const onEvent = (source, method, params) => {
     if (source.tabId !== tabId) return;
+    if (method === "Page.javascriptDialogOpening") {
+      const p = params;
+      dialog = `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${p.type ?? ""}: \xAB${p.message ?? ""}\xBB.`;
+      const error = new PageError("DIALOG_OPEN", dialog, "unknown");
+      for (const reject of waiting) reject(error);
+      waiting.clear();
+    } else if (method === "Page.javascriptDialogClosed") {
+      dialog = null;
+    }
     for (const handler of handlers) handler(method, params ?? {}, source.sessionId);
   };
   const onDetach = (source, reason) => {
@@ -70,13 +81,23 @@ async function attachTab(tabId, api = chrome.debugger) {
     },
     async send(method, params = {}, sessionId, timeoutMs = DEFAULT_TIMEOUT_MS) {
       if (detached) throw new PageError("DETACHED", detached, "unknown");
+      const answersDialog = method === "Page.handleJavaScriptDialog";
+      if (dialog && !answersDialog) throw new PageError("DIALOG_OPEN", dialog);
       const target = sessionId ? { tabId, sessionId } : { tabId };
       let timer;
+      let release2;
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => reject(new PageError("TIMEOUT", `\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0430 \u043D\u0430 ${method} \u0437\u0430 ${timeoutMs} \u043C\u0441.`, "unknown")), timeoutMs);
+        if (!answersDialog) {
+          release2 = reject;
+          waiting.add(reject);
+        }
+      });
+      const command = api.sendCommand(target, method, params);
+      command.catch(() => {
       });
       try {
-        return await Promise.race([api.sendCommand(target, method, params), timeout]);
+        return await Promise.race([command, timeout]);
       } catch (error) {
         if (error instanceof PageError) throw error;
         if (detached) throw new PageError("DETACHED", detached, "unknown");
@@ -85,6 +106,7 @@ async function attachTab(tabId, api = chrome.debugger) {
         throw new PageError("INTERNAL", `${method}: ${message}`, "unknown");
       } finally {
         clearTimeout(timer);
+        if (release2) waiting.delete(release2);
       }
     },
     async detach() {
@@ -283,10 +305,18 @@ async function capture(session) {
   const { cdp, frames } = session;
   const list = frames.list().filter((f) => f.url && !f.url.startsWith("about:blank") || !f.parentFrameId);
   const sessions = [...new Set(list.map((f) => f.sessionId ?? ""))];
-  const layoutPromise = Promise.all(sessions.map(async (key) => {
+  const layoutPromise = Promise.allSettled(sessions.map(async (key) => {
     const snapshot = await cdp.send("DOMSnapshot.captureSnapshot", { computedStyles: LAYOUT_STYLES, includeDOMRects: true }, key || void 0, COMMAND_TIMEOUT_MS);
     return [key, snapshot];
-  })).then((entries) => ({ layout: Object.fromEntries(entries) }), (error) => ({ layout: {}, layoutError: error instanceof Error ? error.message : String(error) }));
+  })).then((results) => {
+    const layout2 = {};
+    const errors = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") layout2[r.value[0]] = r.value[1];
+      else errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+    }
+    return { layout: layout2, layoutError: errors.length ? errors.join("; ") : void 0 };
+  });
   const captured = await Promise.all(list.map(async (frame) => {
     const base = { frameId: frame.frameId, sessionId: frame.sessionId, parentFrameId: frame.parentFrameId, url: frame.url, loaderId: frame.loaderId };
     try {
@@ -522,8 +552,9 @@ function buildFrame(frame, offsetY, ctx) {
     if (!own && children.length === 0 && !interactiveRole) return [];
     const becomesClickable = !interactiveRole && !insideInteractive && Boolean(own?.clickable) && role !== "RootWebArea" && !["html", "body"].includes(own?.tag ?? "") && !hasInteractive(children);
     if (becomesClickable) {
-      const text = (name || textOf(children)).slice(0, CLICKABLE_NAME_MAX);
-      return [{ ...base(ax), kind: "element", role: "clickable", name: text, states: [], children: [], interactive: true, y: yOf(own) }];
+      const full = name || textOf(children);
+      const short = full.length > CLICKABLE_NAME_MAX ? `${full.slice(0, CLICKABLE_NAME_MAX - 1).trimEnd()}\u2026` : full;
+      return [{ ...base(ax), kind: "element", role: "clickable", name: short, states: [], children: tidy(children, short), interactive: true, y: yOf(own) }];
     }
     const node = { ...base(ax), kind: "element", role, name, states: states(ax), children, interactive: interactiveRole, y: yOf(own) };
     if (role === "link" && own?.attrs.href) node.href = own.attrs.href;
@@ -536,7 +567,7 @@ function buildFrame(frame, offsetY, ctx) {
     if (VALUE_ROLES.has(role)) {
       node.children = [];
       const value = valueOf(ax);
-      if (TEXT_FIELDS.has(role) && own && isSecretField(own.attrs)) {
+      if (TEXT_FIELDS.has(role) && (!own || isSecretField(own.attrs))) {
         node.masked = true;
         node.value = value ? MASK : void 0;
       } else if (value !== void 0) {
@@ -791,7 +822,9 @@ async function waitForReady(session, network, probes, capMs = 5e3) {
     let readyState = "loading", mutations = 0;
     try {
       [readyState, mutations] = await probeEval(session, main.frameId, probes, "[__assistant.readyState(), __assistant.mutations()]");
-    } catch {
+    } catch (error) {
+      const code = error?.code;
+      if (code === "DIALOG_OPEN" || code === "DETACHED") throw error;
     }
     if (mutations !== lastMutations) {
       lastMutations = mutations;
@@ -892,6 +925,7 @@ function toMarkdown(nodes) {
       else if (n.role === "link") out.push(link(n));
       else if (n.role === "listitem") out.push(`- ${inline(n.children) || n.name}`);
       else if (n.role === "image" || n.role === "img") out.push(`[\u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435: ${n.name}]`);
+      else if (n.role === "clickable") out.push(`[clickable] ${inline(n.children) || n.name}`);
       else if (n.interactive) out.push(`[${n.role} "${n.name}"${n.masked ? ` = "${MASK}"` : n.value !== void 0 ? ` = "${n.value}"` : ""}]`);
       else walk(n.children);
     }
@@ -1168,6 +1202,7 @@ async function startWatch(session, probes, frameIds) {
   const baseMutations = await readMutations();
   const mainId = session.frames.main().frameId;
   let requests = 0, lastSignal = Date.now(), navigated = false, loaded = false, newTabUrl, navUrl;
+  let requestedUrl, sameDocumentUrl;
   const pending = /* @__PURE__ */ new Set();
   const off = session.cdp.on((method, params, sessionId) => {
     const key = `${sessionId ?? ""}|${params.requestId}`;
@@ -1180,16 +1215,14 @@ async function startWatch(session, probes, frameIds) {
       newTabUrl = params.url;
       lastSignal = Date.now();
     } else if (!sessionId && method === "Page.frameRequestedNavigation" && params.frameId === mainId) {
-      navigated = true;
-      navUrl = params.url;
+      requestedUrl = params.url;
       lastSignal = Date.now();
     } else if (!sessionId && method === "Page.frameNavigated" && !params.frame.parentId) {
       navigated = true;
       navUrl = params.frame.url;
       lastSignal = Date.now();
     } else if (!sessionId && method === "Page.navigatedWithinDocument" && params.frameId === mainId) {
-      navigated = true;
-      navUrl = params.url;
+      sameDocumentUrl = params.url;
       lastSignal = Date.now();
     } else if (!sessionId && method === "Page.loadEventFired") loaded = true;
   });
@@ -1217,11 +1250,19 @@ async function startWatch(session, probes, frameIds) {
           if (loaded || elapsed > NAVIGATION_LOAD_MS) break;
           continue;
         }
-        if (elapsed >= CAP_MS || Date.now() - lastSignal >= QUIET_MS && pending.size === 0) break;
+        const waitingForCommit = requestedUrl !== void 0 && elapsed < NAVIGATION_LOAD_MS && pending.size > 0;
+        if (!waitingForCommit && (elapsed >= CAP_MS || Date.now() - lastSignal >= QUIET_MS && pending.size === 0)) break;
       }
       off();
       const effect = classifyEvidence({ dialog: false, newTab: Boolean(newTabUrl), navigated, mutations, requests });
-      return { effect, url: effect === "new_tab" ? newTabUrl : effect === "navigated" ? navUrl : void 0, requests, mutations };
+      return {
+        effect,
+        url: effect === "new_tab" ? newTabUrl : effect === "navigated" ? navUrl : void 0,
+        requests,
+        mutations,
+        sameDocument: navigated ? void 0 : sameDocumentUrl,
+        notCommitted: navigated || newTabUrl ? void 0 : requestedUrl
+      };
     }
   };
 }
@@ -1242,10 +1283,11 @@ function watchDialog(session) {
   return { opened, current: () => info, off };
 }
 async function sendRaced(session, method, params, dialog) {
-  const command = session.cdp.send(method, params);
-  command.catch(() => {
+  const command = session.cdp.send(method, params).then(() => ({}), (error) => {
+    if (error?.code === "DIALOG_OPEN") return dialog.then((d) => ({ dialog: d }));
+    throw error;
   });
-  return Promise.race([command.then(() => ({})), dialog.then((d) => ({ dialog: d }))]);
+  return Promise.race([command, dialog.then((d) => ({ dialog: d }))]);
 }
 async function click(session, point, dialog, count = 1) {
   const base = { x: point.x, y: point.y, button: "left" };
@@ -1290,7 +1332,7 @@ function insertText(session, text) {
 }
 
 // src/page/act.ts
-var focused = (session, t) => callOn(
+var isFocused = (session, t) => callOn(
   session,
   t.frame,
   t.objectId,
@@ -1299,9 +1341,9 @@ var focused = (session, t) => callOn(
 async function focusTarget(session, t, point, dialog) {
   await session.cdp.send("DOM.focus", { backendNodeId: t.record.backendNodeId }, t.frame.sessionId).catch(() => {
   });
-  if (await focused(session, t)) return;
+  if (await isFocused(session, t)) return;
   await click(session, point, dialog);
-  if (!await focused(session, t)) throw new PageError("NOT_EDITABLE", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u043A\u0443\u0440\u0441\u043E\u0440 \u0432 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${t.record.ref}.`, true);
+  if (!await isFocused(session, t)) throw new PageError("NOT_EDITABLE", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u043A\u0443\u0440\u0441\u043E\u0440 \u0432 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${t.record.ref}.`, true);
 }
 async function typeInto(session, t, text, clear, dialog) {
   if (clear) {
@@ -1343,8 +1385,9 @@ var isChecked = (session, t) => callOn(
 var isSelect = (session, t) => callOn(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');
 
 // src/page/diff.ts
+var unfocused = (line) => line.trim().replace(/ \(focused\)$/, "").replace(/, focused\)$/, ")").replace(/\(focused, /, "(");
 function diffLines(prev, next) {
-  const a = prev.map((l) => l.trim()), b = next.map((l) => l.trim());
+  const a = prev.map(unfocused), b = next.map(unfocused);
   const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
   for (let i2 = a.length - 1; i2 >= 0; i2--) for (let j2 = b.length - 1; j2 >= 0; j2--) {
     dp[i2][j2] = a[i2] === b[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
@@ -1440,15 +1483,18 @@ function normalizeUrl(input) {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 var PAGE_END = "<<<end-page-content>>>";
-function pageText(head, body, notices, before = "") {
-  return [before, head, PAGE_START, body, PAGE_END, ...notices].filter(Boolean).join("\n");
+function neutralize(text) {
+  return text.replace(/<{3,}/g, "\u2039\u2039\u2039").replace(/>{3,}/g, "\u203A\u203A\u203A");
+}
+function pageText(head, body, notices) {
+  return [PAGE_START, ...[head, body].filter(Boolean).map(neutralize), PAGE_END, ...notices.map(neutralize)].join("\n");
 }
 function errorResult(error) {
   if (error instanceof PageError) {
     const delivered = error.delivered === true ? " \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430 \u0431\u044B\u043B\u043E \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : error.delivered === "unknown" ? " \u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E, \u0434\u043E\u0448\u043B\u043E \u043B\u0438 \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : "";
-    return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error.code}: ${error.message}${delivered}` };
+    return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error.code}: ${neutralize(error.message)}${delivered}` };
   }
-  return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 INTERNAL: ${error instanceof Error ? error.message : String(error)}` };
+  return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 INTERNAL: ${neutralize(error instanceof Error ? error.message : String(error))}` };
 }
 var PageTools = class {
   session;
@@ -1479,12 +1525,14 @@ var PageTools = class {
       for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId);
     });
   }
+  /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
   async run(fn, allowDuringDialog = false) {
     try {
       if (this.dialog && !allowDuringDialog) {
-        throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u043E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E \u0447\u0435\u0440\u0435\u0437 handle_dialog.`);
+        throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E (handle_dialog), \u0435\u0441\u043B\u0438 \u044D\u0442\u043E\u0442 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0435\u0441\u0442\u044C, \u0438\u043D\u0430\u0447\u0435 \u043F\u043E\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433.`);
       }
-      return { ok: true, text: await fn() };
+      const out = await fn();
+      return { ok: true, text: typeof out === "string" ? pageText("", out, []) : pageText(out.head, out.body, out.notices) };
     } catch (error) {
       return errorResult(error);
     }
@@ -1492,19 +1540,19 @@ var PageTools = class {
   snapshot(args = {}) {
     return this.run(async () => {
       const o = await this.observer.snapshot({ ...args, budget: this.budget });
-      return pageText(o.header, o.body, o.notices);
+      return { head: o.header, body: o.body, notices: o.notices };
     });
   }
   find(args) {
     return this.run(async () => {
       const r = await this.observer.find(args, this.budget);
-      return pageText(r.header, r.body, r.notices);
+      return { head: r.header, body: r.body, notices: r.notices };
     });
   }
   read(args = {}) {
     return this.run(async () => {
       const r = await this.observer.read({ ref: args.ref, budget: this.budget });
-      return pageText(r.header, r.body, r.notices);
+      return { head: r.header, body: r.body, notices: r.notices };
     });
   }
   /** The page around the screen as full lines (text included), for the diff in a receipt. */
@@ -1517,9 +1565,9 @@ var PageTools = class {
    * dispatch; after it, a failure says the event was sent.
    */
   async #act(verb, ref, needs, dispatch) {
-    const before = await this.#describe();
     const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
     const actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    const before = await this.#describe();
     return this.#dispatchAndReport(
       `${verb} [${ref}] ${target.record.role} "${target.record.name}"`,
       before,
@@ -1543,7 +1591,14 @@ var PageTools = class {
     }
     const evidence = await watch.settle(() => dialog.current());
     dialog.off();
-    return `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${await this.#effectText(evidence, before)}`;
+    let effect;
+    try {
+      effect = await this.#effectText(evidence, before);
+    } catch (error) {
+      if (!(error instanceof PageError && error.code === "DIALOG_OPEN") || !this.dialog) throw error;
+      effect = `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+    }
+    return `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${effect}`;
   }
   async #effectText(e, before) {
     const counts = `\u043C\u0443\u0442\u0430\u0446\u0438\u0439 ${e.mutations}, \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 ${e.requests}`;
@@ -1559,7 +1614,9 @@ var PageTools = class {
 \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`;
     }
     const diff = renderDiff(diffLines(before, await this.#describe()));
-    const head = e.effect === "changed" ? `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${counts})` : e.effect === "requests" ? `\u0443\u0448\u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${e.requests}), \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C` : "\u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0440\u0435\u0430\u043A\u0446\u0438\u0438 \u043D\u0435\u0442";
+    let head = e.effect === "changed" ? `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${counts})` : e.effect === "requests" ? `\u0443\u0448\u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${e.requests}), \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C` : "\u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0440\u0435\u0430\u043A\u0446\u0438\u0438 \u043D\u0435\u0442";
+    if (e.sameDocument) head = `\u0430\u0434\u0440\u0435\u0441 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F \u043D\u0430 ${e.sameDocument} (\u0431\u0435\u0437 \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438) \xB7 ${head}`;
+    if (e.notCommitted) head = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.notCommitted} \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D, \u043D\u043E \u043D\u0435 \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u0451\u043B (\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0444\u0430\u0439\u043B\u0430, \u043F\u0443\u0441\u0442\u043E\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438\u043B\u0438 \u043E\u0442\u043C\u0435\u043D\u0430) \xB7 ${head}`;
     return diff ? `${head}
 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F:
 ${diff}` : head;
@@ -1603,11 +1660,20 @@ ${diff}` : head;
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError("NOT_FOUND", `\u041A\u043B\u0430\u0432\u0438\u0448\u0430 ${args.key} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(KEYS).join(", ")}.`);
       if (args.ref) {
-        return this.#act(`press ${args.key}`, args.ref, { pointer: false }, async (t, _a, dialog) => {
-          await this.session.cdp.send("DOM.focus", { backendNodeId: t.record.backendNodeId }, t.frame.sessionId).catch(() => {
-          });
-          return pressKey(this.session, args.key, dialog);
+        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
+        await this.session.cdp.send("DOM.focus", { backendNodeId: target.record.backendNodeId }, target.frame.sessionId).catch(() => {
         });
+        if (!await isFocused(this.session, target)) {
+          throw new PageError("NOT_EDITABLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref} \u043D\u0435 \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442 \u0444\u043E\u043A\u0443\u0441 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B: \u043A\u043B\u0430\u0432\u0438\u0448\u0430 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430. \u0414\u043B\u044F \u043D\u0435\u0433\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439\u0442\u0435 click.`);
+        }
+        const before = await this.#describe();
+        return this.#dispatchAndReport(
+          `press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`,
+          before,
+          [target.frame.frameId],
+          (dialog) => pressKey(this.session, args.key, dialog)
+        );
       }
       return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog));
     });

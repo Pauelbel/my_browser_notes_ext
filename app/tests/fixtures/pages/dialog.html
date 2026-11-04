@@ -2,5 +2,6 @@
 <h1>Диалоги</h1>
 <button onclick="alert('Привет из alert'); document.getElementById('status').textContent='alert закрыт'">Показать alert</button>
 <button onclick="document.getElementById('status').textContent = confirm('Вы уверены?') ? 'Подтверждено' : 'Отменено'">Показать confirm</button>
+<button onclick="fetch('/slow?ms=1800').then(() => alert('Поздний alert'))">Alert после запроса</button>
 <div id="status">Статус: ждём</div>
 </body></html>

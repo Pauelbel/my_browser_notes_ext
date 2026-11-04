@@ -47,11 +47,24 @@ export async function attachTab(tabId: number, api: typeof chrome.debugger = chr
   }
 
   const handlers = new Set<CdpHandler>();
+  // A page dialog blocks its renderer: commands would wait out their timeout. While one is open, every command
+  // but the answer to it fails at once, and the ones already waiting are released.
+  let dialog: string | null = null;
+  const waiting = new Set<(error: PageError) => void>();
   const detachCallbacks: ((reason: string) => void)[] = [];
   let detached: string | null = null;
 
   const onEvent = (source: chrome.debugger.DebuggerSession, method: string, params?: object) => {
     if (source.tabId !== tabId) return;
+    if (method === 'Page.javascriptDialogOpening') {
+      const p = params as {type?: string; message?: string};
+      dialog = `На странице открыт диалог ${p.type ?? ''}: «${p.message ?? ''}».`;
+      const error = new PageError('DIALOG_OPEN', dialog, 'unknown');
+      for (const reject of waiting) reject(error);
+      waiting.clear();
+    } else if (method === 'Page.javascriptDialogClosed') {
+      dialog = null;
+    }
     for (const handler of handlers) handler(method, params ?? {}, source.sessionId);
   };
   const onDetach = (source: chrome.debugger.Debuggee, reason: string) => {
@@ -73,13 +86,19 @@ export async function attachTab(tabId: number, api: typeof chrome.debugger = chr
     onDetach(callback) { detachCallbacks.push(callback); },
     async send<T>(method: string, params: object = {}, sessionId?: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
       if (detached) throw new PageError('DETACHED', detached, 'unknown');
+      const answersDialog = method === 'Page.handleJavaScriptDialog';
+      if (dialog && !answersDialog) throw new PageError('DIALOG_OPEN', dialog);
       const target: chrome.debugger.DebuggerSession = sessionId ? {tabId, sessionId} : {tabId};
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let release: ((error: PageError) => void) | undefined;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new PageError('TIMEOUT', `Страница не ответила на ${method} за ${timeoutMs} мс.`, 'unknown')), timeoutMs);
+        if (!answersDialog) { release = reject; waiting.add(reject); }
       });
+      const command = api.sendCommand(target, method, params) as Promise<T>;
+      command.catch(() => {});
       try {
-        return await Promise.race([api.sendCommand(target, method, params) as Promise<T>, timeout]);
+        return await Promise.race([command, timeout]);
       } catch (error) {
         if (error instanceof PageError) throw error;
         if (detached) throw new PageError('DETACHED', detached, 'unknown');
@@ -88,6 +107,7 @@ export async function attachTab(tabId: number, api: typeof chrome.debugger = chr
         throw new PageError('INTERNAL', `${method}: ${message}`, 'unknown');
       } finally {
         clearTimeout(timer);
+        if (release) waiting.delete(release);
       }
     },
     async detach() {

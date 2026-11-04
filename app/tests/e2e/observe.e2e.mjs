@@ -41,6 +41,6 @@ export default async function ({openPage, base, server, sleep, log}) {
   const basic = await open(`${server.origin}/basic.html`);
   const read = await call(basic, 'read');
   const content = read.text.split('<<<page-content>>>')[1];
-  must(content.trim().startsWith('# Тестовая страница'), `read: ${read.text}`);
+  must(content.split('\n').slice(2).join('\n').trim().startsWith('# Тестовая страница'), `read: ${read.text}`);
   must(/\[Перейти на вторую страницу\]\(.*basic2\.html\)/.test(read.text), `read: ${read.text}`);
 }

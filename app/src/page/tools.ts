@@ -9,7 +9,7 @@ import {resolveTarget, type Target} from './resolve.ts';
 import {waitActionable, type Actionable} from './actionability.ts';
 import {startWatch, type Evidence} from './evidence.ts';
 import {click, hover, pressKey, wheel, watchDialog, KEYS, type DialogInfo, type KeyName} from './input.ts';
-import {focusTarget, isChecked, isSelect, selectOption, typeInto} from './act.ts';
+import {focusTarget, isChecked, isFocused, isSelect, selectOption, typeInto} from './act.ts';
 import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
 import {waitForReady} from './readiness.ts';
@@ -38,17 +38,23 @@ export function normalizeUrl(input: string): string {
 }
 export const PAGE_END = '<<<end-page-content>>>';
 
-export function pageText(head: string, body: string, notices: string[], before = ''): string {
-  return [before, head, PAGE_START, body, PAGE_END, ...notices].filter(Boolean).join('\n');
+/** Page text can never close or open the data block: runs of three angle brackets are replaced. */
+export function neutralize(text: string): string {
+  return text.replace(/<{3,}/g, '‹‹‹').replace(/>{3,}/g, '›››');
+}
+
+/** A tool result: everything derived from the page (title, address, names, text) goes between the markers. */
+export function pageText(head: string, body: string, notices: string[]): string {
+  return [PAGE_START, ...[head, body].filter(Boolean).map(neutralize), PAGE_END, ...notices.map(neutralize)].join('\n');
 }
 
 export function errorResult(error: unknown): ToolResult {
   if (error instanceof PageError) {
     const delivered = error.delivered === true ? ' Событие ввода было отправлено: проверьте страницу, прежде чем повторять.'
       : error.delivered === 'unknown' ? ' Неизвестно, дошло ли событие ввода: проверьте страницу, прежде чем повторять.' : '';
-    return {ok: false, text: `ошибка ${error.code}: ${error.message}${delivered}`};
+    return {ok: false, text: `ошибка ${error.code}: ${neutralize(error.message)}${delivered}`};
   }
-  return {ok: false, text: `ошибка INTERNAL: ${error instanceof Error ? error.message : String(error)}`};
+  return {ok: false, text: `ошибка INTERNAL: ${neutralize(error instanceof Error ? error.message : String(error))}`};
 }
 
 export class PageTools {
@@ -75,12 +81,14 @@ export class PageTools {
     session.frames.onChange(() => { for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId); });
   }
 
-  protected async run(fn: () => Promise<string>, allowDuringDialog = false): Promise<ToolResult> {
+  /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
+  protected async run(fn: () => Promise<string | {head: string; body: string; notices: string[]}>, allowDuringDialog = false): Promise<ToolResult> {
     try {
       if (this.dialog && !allowDuringDialog) {
-        throw new PageError('DIALOG_OPEN', `На странице открыт диалог ${this.dialog.type}: «${this.dialog.message}». Сначала ответьте на него через handle_dialog.`);
+        throw new PageError('DIALOG_OPEN', `На странице открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте на него (handle_dialog), если этот инструмент есть, иначе попросите пользователя закрыть диалог.`);
       }
-      return {ok: true, text: await fn()};
+      const out = await fn();
+      return {ok: true, text: typeof out === 'string' ? pageText('', out, []) : pageText(out.head, out.body, out.notices)};
     } catch (error) {
       return errorResult(error);
     }
@@ -89,21 +97,21 @@ export class PageTools {
   snapshot(args: {mode?: OutlineMode; window?: WindowMode} = {}): Promise<ToolResult> {
     return this.run(async () => {
       const o = await this.observer.snapshot({...args, budget: this.budget});
-      return pageText(o.header, o.body, o.notices);
+      return {head: o.header, body: o.body, notices: o.notices};
     });
   }
 
   find(args: {role?: string; name?: string; text?: string}): Promise<ToolResult> {
     return this.run(async () => {
       const r = await this.observer.find(args, this.budget);
-      return pageText(r.header, r.body, r.notices);
+      return {head: r.header, body: r.body, notices: r.notices};
     });
   }
 
   read(args: {ref?: string} = {}): Promise<ToolResult> {
     return this.run(async () => {
       const r = await this.observer.read({ref: args.ref, budget: this.budget});
-      return pageText(r.header, r.body, r.notices);
+      return {head: r.header, body: r.body, notices: r.notices};
     });
   }
 
@@ -119,9 +127,10 @@ export class PageTools {
    */
   async #act(verb: string, ref: string, needs: {pointer: boolean; editable?: boolean},
     dispatch: (t: Target, a: Actionable, dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>): Promise<string> {
-    const before = await this.#describe();
     const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
     const actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    // The baseline comes after the checks, which may have scrolled the target into view: scrolling is not a reaction.
+    const before = await this.#describe();
     return this.#dispatchAndReport(`${verb} [${ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
       dialog => dispatch(target, actionable, dialog), target.record.proxy === 'label' ? ` (клик по связанной подписи "${target.record.name}")` : '');
   }
@@ -141,7 +150,15 @@ export class PageTools {
     }
     const evidence = await watch.settle(() => dialog.current());
     dialog.off();
-    return `${what}${suffix}: событие отправлено${note ? ` · ${note}` : ''} · реакция: ${await this.#effectText(evidence, before)}`;
+    let effect: string;
+    try {
+      effect = await this.#effectText(evidence, before);
+    } catch (error) {
+      // A dialog that opened after the reaction window is still this action's reaction.
+      if (!(error instanceof PageError && error.code === 'DIALOG_OPEN') || !this.dialog) throw error;
+      effect = `открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте через handle_dialog.`;
+    }
+    return `${what}${suffix}: событие отправлено${note ? ` · ${note}` : ''} · реакция: ${effect}`;
   }
 
   async #effectText(e: Evidence, before: string[]): Promise<string> {
@@ -156,7 +173,9 @@ export class PageTools {
       return `переход на ${e.url ?? o.capture.url}\nновая страница: ${o.header}\nСделайте snapshot, чтобы увидеть её элементы.`;
     }
     const diff = renderDiff(diffLines(before, await this.#describe()));
-    const head = e.effect === 'changed' ? `страница изменилась (${counts})` : e.effect === 'requests' ? `ушли запросы (${e.requests}), описание около экрана не изменилось` : 'видимой реакции нет';
+    let head = e.effect === 'changed' ? `страница изменилась (${counts})` : e.effect === 'requests' ? `ушли запросы (${e.requests}), описание около экрана не изменилось` : 'видимой реакции нет';
+    if (e.sameDocument) head = `адрес изменился на ${e.sameDocument} (без перезагрузки) · ${head}`;
+    if (e.notCommitted) head = `переход на ${e.notCommitted} запрошен, но не произошёл (загрузка файла, пустой ответ или отмена) · ${head}`;
     return diff ? `${head}\nизменения:\n${diff}` : head;
   }
 
@@ -198,10 +217,16 @@ export class PageTools {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError('NOT_FOUND', `Клавиша ${args.key} не поддерживается. Есть: ${Object.keys(KEYS).join(', ')}.`);
       if (args.ref) {
-        return this.#act(`press ${args.key}`, args.ref, {pointer: false}, async (t, _a, dialog) => {
-          await this.session.cdp.send('DOM.focus', {backendNodeId: t.record.backendNodeId}, t.frame.sessionId).catch(() => {});
-          return pressKey(this.session, args.key, dialog);
-        });
+        // The key goes to whatever has focus, so the target must hold it before anything is sent.
+        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        await waitActionable(this.session, target, {pointer: false}, this.observer.probes);
+        await this.session.cdp.send('DOM.focus', {backendNodeId: target.record.backendNodeId}, target.frame.sessionId).catch(() => {});
+        if (!await isFocused(this.session, target)) {
+          throw new PageError('NOT_EDITABLE', `Элемент ${args.ref} не принимает фокус клавиатуры: клавиша не отправлена. Для него используйте click.`);
+        }
+        const before = await this.#describe();
+        return this.#dispatchAndReport(`press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
+          dialog => pressKey(this.session, args.key, dialog));
       }
       return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], dialog => pressKey(this.session, args.key, dialog));
     });

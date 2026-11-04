@@ -6,7 +6,13 @@ import type {ProbeCache} from './resolve.ts';
 import type {PageSession} from './session.ts';
 
 export type Effect = 'navigated' | 'new_tab' | 'dialog' | 'changed' | 'requests' | 'none';
-export interface Evidence { effect: Effect; url?: string; dialog?: DialogInfo; requests: number; mutations: number }
+export interface Evidence {
+  effect: Effect; url?: string; dialog?: DialogInfo; requests: number; mutations: number;
+  /** The address changed without loading a new document (pushState, a #hash). */
+  sameDocument?: string;
+  /** A navigation was asked for but no new document came (a download, a 204, a cancel). */
+  notCommitted?: string;
+}
 
 const POLL_MS = 100;
 const CAP_MS = 1500;
@@ -34,15 +40,17 @@ export async function startWatch(session: PageSession, probes: ProbeCache, frame
   const baseMutations = await readMutations();
   const mainId = session.frames.main().frameId;
   let requests = 0, lastSignal = Date.now(), navigated = false, loaded = false, newTabUrl: string | undefined, navUrl: string | undefined;
+  let requestedUrl: string | undefined, sameDocumentUrl: string | undefined;
   const pending = new Set<string>();
   const off = session.cdp.on((method, params, sessionId) => {
     const key = `${sessionId ?? ''}|${params.requestId}`;
     if (method === 'Network.requestWillBeSent' && params.type !== 'EventSource') { requests++; pending.add(key); lastSignal = Date.now(); }
     else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && pending.delete(key)) lastSignal = Date.now();
     else if (method === 'Page.windowOpen') { newTabUrl = params.url; lastSignal = Date.now(); }
-    else if (!sessionId && method === 'Page.frameRequestedNavigation' && params.frameId === mainId) { navigated = true; navUrl = params.url; lastSignal = Date.now(); }
+    // A request alone is not a navigation (a download or a 204 never commits); a new document is.
+    else if (!sessionId && method === 'Page.frameRequestedNavigation' && params.frameId === mainId) { requestedUrl = params.url; lastSignal = Date.now(); }
     else if (!sessionId && method === 'Page.frameNavigated' && !params.frame.parentId) { navigated = true; navUrl = params.frame.url; lastSignal = Date.now(); }
-    else if (!sessionId && method === 'Page.navigatedWithinDocument' && params.frameId === mainId) { navigated = true; navUrl = params.url; lastSignal = Date.now(); }
+    else if (!sessionId && method === 'Page.navigatedWithinDocument' && params.frameId === mainId) { sameDocumentUrl = params.url; lastSignal = Date.now(); }
     else if (!sessionId && method === 'Page.loadEventFired') loaded = true;
   });
 
@@ -65,11 +73,14 @@ export async function startWatch(session: PageSession, probes: ProbeCache, frame
           if (loaded || elapsed > NAVIGATION_LOAD_MS) break;
           continue;
         }
-        if (elapsed >= CAP_MS || (Date.now() - lastSignal >= QUIET_MS && pending.size === 0)) break;
+        // A requested navigation gets time to commit before the window closes.
+        const waitingForCommit = requestedUrl !== undefined && elapsed < NAVIGATION_LOAD_MS && pending.size > 0;
+        if (!waitingForCommit && (elapsed >= CAP_MS || (Date.now() - lastSignal >= QUIET_MS && pending.size === 0))) break;
       }
       off();
       const effect = classifyEvidence({dialog: false, newTab: Boolean(newTabUrl), navigated, mutations, requests});
-      return {effect, url: effect === 'new_tab' ? newTabUrl : effect === 'navigated' ? navUrl : undefined, requests, mutations};
+      return {effect, url: effect === 'new_tab' ? newTabUrl : effect === 'navigated' ? navUrl : undefined, requests, mutations,
+        sameDocument: navigated ? undefined : sameDocumentUrl, notCommitted: navigated || newTabUrl ? undefined : requestedUrl};
     },
   };
 }

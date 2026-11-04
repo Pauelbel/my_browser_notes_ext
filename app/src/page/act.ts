@@ -6,14 +6,14 @@ import type {Point} from './geometry.ts';
 import {callOn, type Target} from './resolve.ts';
 import type {PageSession} from './session.ts';
 
-const focused = (session: PageSession, t: Target) => callOn<boolean>(session, t.frame, t.objectId,
+export const isFocused = (session: PageSession, t: Target) => callOn<boolean>(session, t.frame, t.objectId,
   'function () { const f = __assistant.focusInfo(); return f === this || (f && this.contains(f)); }');
 
 export async function focusTarget(session: PageSession, t: Target, point: Point, dialog: Promise<DialogInfo>): Promise<void> {
   await session.cdp.send('DOM.focus', {backendNodeId: t.record.backendNodeId}, t.frame.sessionId).catch(() => {});
-  if (await focused(session, t)) return;
+  if (await isFocused(session, t)) return;
   await click(session, point, dialog);
-  if (!await focused(session, t)) throw new PageError('NOT_EDITABLE', `Не удалось поставить курсор в элемент ${t.record.ref}.`, true);
+  if (!await isFocused(session, t)) throw new PageError('NOT_EDITABLE', `Не удалось поставить курсор в элемент ${t.record.ref}.`, true);
 }
 
 export async function typeInto(session: PageSession, t: Target, text: string, clear: boolean, dialog: Promise<DialogInfo>): Promise<void> {

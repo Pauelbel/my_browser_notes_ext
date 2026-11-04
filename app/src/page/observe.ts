@@ -112,6 +112,7 @@ export function toMarkdown(nodes: ONode[]): string {
       else if (n.role === 'link') out.push(link(n));
       else if (n.role === 'listitem') out.push(`- ${inline(n.children) || n.name}`);
       else if (n.role === 'image' || n.role === 'img') out.push(`[изображение: ${n.name}]`);
+      else if (n.role === 'clickable') out.push(`[clickable] ${inline(n.children) || n.name}`);
       else if (n.interactive) out.push(`[${n.role} "${n.name}"${n.masked ? ` = "${MASK}"` : n.value !== undefined ? ` = "${n.value}"` : ''}]`);
       else walk(n.children);
     }
