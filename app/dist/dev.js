@@ -276,6 +276,45 @@ var manager = () => defaultManager ??= createSessionManager();
 var acquire = (tabId) => manager().acquire(tabId);
 var release = (session) => manager().release(session);
 
+// src/page/capture.ts
+var LAYOUT_STYLES = ["display", "visibility", "opacity", "cursor", "pointer-events", "overflow-x", "overflow-y"];
+var COMMAND_TIMEOUT_MS = 8e3;
+async function capture(session) {
+  const { cdp, frames } = session;
+  const list = frames.list().filter((f) => f.url && !f.url.startsWith("about:blank") || !f.parentFrameId);
+  const sessions = [...new Set(list.map((f) => f.sessionId ?? ""))];
+  const layoutPromise = Promise.all(sessions.map(async (key) => {
+    const snapshot = await cdp.send("DOMSnapshot.captureSnapshot", { computedStyles: LAYOUT_STYLES, includeDOMRects: true }, key || void 0, COMMAND_TIMEOUT_MS);
+    return [key, snapshot];
+  })).then((entries) => ({ layout: Object.fromEntries(entries) }), (error) => ({ layout: {}, layoutError: error instanceof Error ? error.message : String(error) }));
+  const captured = await Promise.all(list.map(async (frame) => {
+    const base = { frameId: frame.frameId, sessionId: frame.sessionId, parentFrameId: frame.parentFrameId, url: frame.url, loaderId: frame.loaderId };
+    try {
+      const { nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId: frame.frameId }, frame.sessionId, COMMAND_TIMEOUT_MS);
+      return { ...base, nodes, status: "captured" };
+    } catch (error) {
+      return { ...base, nodes: [], status: "failed", reason: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+  const metrics = await cdp.send("Page.getLayoutMetrics");
+  const { layout, layoutError } = await layoutPromise;
+  const main = captured.find((f) => !f.parentFrameId) ?? captured[0];
+  const root = main?.nodes.find((n) => n.role?.value === "RootWebArea");
+  return {
+    url: main?.url ?? "",
+    title: typeof root?.name?.value === "string" ? root.name.value : "",
+    frames: captured,
+    layout,
+    layoutError,
+    viewport: {
+      width: Math.round(metrics.cssLayoutViewport.clientWidth),
+      height: Math.round(metrics.cssLayoutViewport.clientHeight),
+      scrollY: Math.round(metrics.cssLayoutViewport.pageY),
+      pageHeight: Math.round(metrics.cssContentSize.height)
+    }
+  };
+}
+
 // src/dev/harness.ts
 async function withSession(tabId, fn) {
   const session = await acquire(tabId);
@@ -291,6 +330,7 @@ var layer = {
     const win = await chrome.windows.create({ url, width: 1e3, height: 760 });
     return win.tabs[0].id;
   },
-  frames: (tabId) => withSession(tabId, async (session) => session.frames.list())
+  frames: (tabId) => withSession(tabId, async (session) => session.frames.list()),
+  capture: (tabId) => withSession(tabId, capture)
 };
 Object.assign(window, { layer });

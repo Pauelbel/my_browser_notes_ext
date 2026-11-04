@@ -1,4 +1,4 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Длинный список</title></head><body>
 <h1>Длинный список</h1><ul id="list"></ul>
-<script>const ul = document.getElementById('list'); for (let i = 1; i <= 3000; i++) { const li = document.createElement('li'); li.innerHTML = '<a href="#item' + i + '">Строка ' + i + '</a>'; ul.append(li); }</script>
+<script>const ul = document.getElementById('list'); const n = Number(new URLSearchParams(location.search).get('n') || 3000); for (let i = 1; i <= n; i++) { const li = document.createElement('li'); li.innerHTML = '<a href="#item' + i + '">Строка ' + i + '</a>'; ul.append(li); }</script>
 </body></html>
