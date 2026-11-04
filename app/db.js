@@ -10,8 +10,9 @@ const committed = tx => new Promise((resolve, reject) => { tx.oncomplete = resol
 
 export async function open() {
   if (db) return;
-  // 1.0 starts clean: drop the 0.x database and its settings.
-  await done(indexedDB.deleteDatabase('quiet-notes')).catch(console.error);
+  // 1.0 starts clean: drop the 0.x database and its settings. Not awaited: deletion waits
+  // for every open connection to close, and a stale 0.x page must not block startup.
+  indexedDB.deleteDatabase('quiet-notes').onerror = event => console.error(event.target.error);
   try { for (const key of Object.keys(localStorage)) if (key.startsWith('quiet-')) localStorage.removeItem(key); } catch {}
   const request = indexedDB.open('notes', 1);
   request.onupgradeneeded = () => {

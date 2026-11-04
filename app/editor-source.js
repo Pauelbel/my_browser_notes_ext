@@ -75,7 +75,7 @@ export function createEditor(element, {onChange}) {
       editor.view.updateState(editor.state.constructor.create({doc:editor.state.doc, plugins:editor.state.plugins}));
     },
     run:command => commands[command]?.(editor.chain().focus()).run(),
-    can:command => Boolean(commands[command]?.(editor.can().chain().focus()).run()),
+    can:command => Boolean(commands[command]?.(editor.can().chain()).run()),
     isActive:command => command === 'heading' ? editor.isActive('heading', {level:2}) : editor.isActive(command),
     inTable:() => editor.isActive('table'),
     // Screen box of the table cell holding the cursor, for placing the row/column controls.
