@@ -734,6 +734,16 @@ var PROBE_SOURCE = `(() => {
       l.place();
       return 1;
     },
+    border(on, color) {
+      let host = document.querySelector('[${OVERLAY_ATTR2}="border"]');
+      if (!on) { if (host) host.remove(); return; }
+      if (host) return;
+      host = document.createElement('div');
+      host.setAttribute('${OVERLAY_ATTR2}', 'border');
+      for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block'],
+        ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
+      document.documentElement.append(host);
+    },
     clearHighlights() {
       for (const name of highlights.keys()) CSS.highlights.delete(name);
       highlights.clear();
@@ -1904,6 +1914,11 @@ ${diff}` : head;
       return `\u044D\u043B\u0435\u043C\u0435\u043D\u0442 [${args.ref}] ${target.record.role} "${target.record.name}" \u043E\u0431\u0432\u0435\u0434\u0451\u043D (\u0446\u0432\u0435\u0442 ${color})`;
     });
   }
+  /** The frame around a page the agent works on; best effort, a page that is gone has nothing to frame. */
+  async border(on) {
+    await probeEval(this.session, this.session.frames.main().frameId, this.observer.probes, `__assistant.border(${on}, 'rgba(124, 92, 255, 0.85)')`).catch(() => {
+    });
+  }
   clearHighlights() {
     return this.run(async () => {
       await this.highlighter.clear();
@@ -1965,6 +1980,108 @@ ${diff}` : head;
   }
 };
 
+// src/agent/agent-tabs.ts
+var TITLE_MAX = 20;
+var AgentTabs = class {
+  #deps;
+  #start;
+  #current;
+  #members = /* @__PURE__ */ new Set();
+  #handles = /* @__PURE__ */ new Map();
+  #groupId = null;
+  #onCreated = (tab) => {
+    if (tab.id !== void 0 && tab.openerTabId !== void 0 && this.#members.has(tab.openerTabId)) this.adopt(tab.id);
+  };
+  constructor(startTabId, deps) {
+    this.#deps = deps;
+    this.#start = startTabId;
+    this.#current = startTabId;
+    this.#members.add(startTabId);
+    deps.tabs.onCreated?.addListener(this.#onCreated);
+  }
+  async current() {
+    const tabId = this.#current;
+    let handle = this.#handles.get(tabId);
+    if (!handle) {
+      handle = this.#deps.open(tabId).then(async (h) => {
+        await this.#group(tabId);
+        if (this.#deps.border) await h.tools.border(true);
+        return h;
+      });
+      this.#handles.set(tabId, handle);
+      handle.catch(() => this.#handles.delete(tabId));
+    }
+    return (await handle).tools;
+  }
+  async list() {
+    const lines = [];
+    for (const id of this.#members) {
+      const tab = await this.#deps.tabs.get(id).catch(() => null);
+      if (!tab) {
+        this.#members.delete(id);
+        continue;
+      }
+      lines.push(`${id === this.#current ? "* " : "  "}[\u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${id}] ${tab.title ?? ""} \u2014 ${tab.url ?? ""}`);
+    }
+    return lines.join("\n");
+  }
+  async open(url) {
+    const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const tab = await this.#deps.tabs.create({ url: target, active: true, openerTabId: this.#current });
+    this.#members.add(tab.id);
+    this.#current = tab.id;
+    await this.#group(tab.id);
+    return `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${tab.id}: ${target}; \u043E\u043D\u0430 \u0442\u0435\u043F\u0435\u0440\u044C \u0442\u0435\u043A\u0443\u0449\u0430\u044F`;
+  }
+  async switch(tabId) {
+    if (!this.#members.has(tabId)) throw new PageError("NOT_FOUND", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 ${tabId} \u043D\u0435 \u0438\u0437 \u044D\u0442\u043E\u0439 \u0437\u0430\u0434\u0430\u0447\u0438: \u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C \u043C\u043E\u0436\u043D\u043E \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0430\u0445 \u0437\u0430\u0434\u0430\u0447\u0438 (tabs list).`);
+    await this.#deps.tabs.update(tabId, { active: true });
+    this.#current = tabId;
+    return `\u0442\u0435\u043A\u0443\u0449\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${tabId}`;
+  }
+  async close(tabId) {
+    if (tabId === this.#start) throw new PageError("NOT_FOUND", "\u0421\u0442\u0430\u0440\u0442\u043E\u0432\u0443\u044E \u0432\u043A\u043B\u0430\u0434\u043A\u0443 \u0437\u0430\u0434\u0430\u0447\u0438 \u0437\u0430\u043A\u0440\u044B\u0432\u0430\u0442\u044C \u043D\u0435\u043B\u044C\u0437\u044F.");
+    if (!this.#members.has(tabId)) throw new PageError("NOT_FOUND", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 ${tabId} \u043D\u0435 \u0438\u0437 \u044D\u0442\u043E\u0439 \u0437\u0430\u0434\u0430\u0447\u0438.`);
+    await this.#releaseTab(tabId);
+    await this.#deps.tabs.remove(tabId).catch(() => {
+    });
+    this.#members.delete(tabId);
+    if (this.#current === tabId) this.#current = this.#start;
+    return `\u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${tabId} \u0437\u0430\u043A\u0440\u044B\u0442\u0430; \u0442\u0435\u043A\u0443\u0449\u0430\u044F \u2014 ${this.#current}`;
+  }
+  adopt(tabId) {
+    if (this.#members.has(tabId)) return;
+    this.#members.add(tabId);
+    void this.#group(tabId);
+  }
+  async releaseAll() {
+    this.#deps.tabs.onCreated?.removeListener(this.#onCreated);
+    await Promise.all([...this.#handles.keys()].map((id) => this.#releaseTab(id)));
+  }
+  async #releaseTab(tabId) {
+    const handle = this.#handles.get(tabId);
+    this.#handles.delete(tabId);
+    if (!handle) return;
+    try {
+      const h = await handle;
+      await h.tools.border(false);
+      await h.release();
+    } catch {
+    }
+  }
+  async #group(tabId) {
+    try {
+      if (this.#groupId === null) {
+        this.#groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
+        await this.#deps.tabGroups?.update(this.#groupId, { title: this.#deps.title.slice(0, TITLE_MAX), color: "blue" });
+      } else {
+        await this.#deps.tabs.group({ groupId: this.#groupId, tabIds: [tabId] });
+      }
+    } catch {
+    }
+  }
+};
+
 // src/dev/harness.ts
 async function withSession(tabId, fn) {
   const session = await acquire(tabId);
@@ -2008,6 +2125,44 @@ var layer = {
     return r.result.value;
   },
   questions: [],
+  /** Evaluates in a tab through a shared or temporary debugger session. */
+  rawEval: (tabId, expression) => withSession(tabId, async (session) => (await session.cdp.send("Runtime.evaluate", { expression, returnByValue: true })).result.value),
+  agentTabs: {
+    instance: null,
+    create(startTabId, title) {
+      this.instance = new AgentTabs(startTabId, {
+        tabs: chrome.tabs,
+        tabGroups: chrome.tabGroups,
+        border: true,
+        title,
+        open: async (tabId) => {
+          const session = await acquire(tabId);
+          const tools = new PageTools(session, { budget: 26214 });
+          return { tools, release: async () => {
+            tools.dispose();
+            await release(session);
+          } };
+        }
+      });
+      return true;
+    },
+    async current() {
+      await this.instance.current();
+      return true;
+    },
+    open(url) {
+      return this.instance.open(url);
+    },
+    list() {
+      return this.instance.list();
+    },
+    switch(tabId) {
+      return this.instance.switch(tabId);
+    },
+    releaseAll() {
+      return this.instance.releaseAll();
+    }
+  },
   /** A scripted gate for scenarios: answers in order, and the blocked sites. */
   async setGate(tabId, script) {
     const tools = await toolsFor(tabId, 26214);

@@ -2,6 +2,7 @@
 // Fixture tabs open in their own window, so both they and this page stay visible and their timers run at full speed.
 import {acquire, release, PageTools, type PageSession} from '../page/index.ts';
 import {capture} from '../page/capture.ts';
+import {AgentTabs} from '../agent/agent-tabs.ts';
 
 async function withSession<T>(tabId: number, fn: (session: PageSession) => Promise<T>): Promise<T> {
   const session = await acquire(tabId);
@@ -39,6 +40,22 @@ const layer = {
     return r.result.value;
   },
   questions: [] as unknown[],
+  /** Evaluates in a tab through a shared or temporary debugger session. */
+  rawEval: (tabId: number, expression: string) => withSession(tabId, async session =>
+    (await session.cdp.send<{result: {value: unknown}}>('Runtime.evaluate', {expression, returnByValue: true})).result.value),
+  agentTabs: {
+    instance: null as AgentTabs | null,
+    create(startTabId: number, title: string) {
+      this.instance = new AgentTabs(startTabId, {tabs: chrome.tabs, tabGroups: chrome.tabGroups, border: true, title,
+        open: async tabId => { const session = await acquire(tabId); const tools = new PageTools(session, {budget: 26214}); return {tools, release: async () => { tools.dispose(); await release(session); }}; }});
+      return true;
+    },
+    async current() { await this.instance!.current(); return true; },
+    open(url: string) { return this.instance!.open(url); },
+    list() { return this.instance!.list(); },
+    switch(tabId: number) { return this.instance!.switch(tabId); },
+    releaseAll() { return this.instance!.releaseAll(); },
+  },
   /** A scripted gate for scenarios: answers in order, and the blocked sites. */
   async setGate(tabId: number, script: {answers: string[]; blocked: string[]}) {
     const tools = await toolsFor(tabId, 26214);

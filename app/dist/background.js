@@ -252,8 +252,10 @@ async function write(stores, fn, conversationId) {
   announce(conversationId);
   return result;
 }
-function getConversation(id) {
-  return done(database().transaction("conversations").objectStore("conversations").get(id));
+var withDefaults = (c) => ({ ...c, mode: c.mode ?? "chat", permission: c.permission ?? "ask" });
+async function getConversation(id) {
+  const found = await done(database().transaction("conversations").objectStore("conversations").get(id));
+  return found && withDefaults(found);
 }
 function createConversation(init) {
   const now2 = Date.now();
@@ -262,6 +264,8 @@ function createConversation(init) {
     title: titleFrom(init.firstMessage),
     titleByUser: false,
     profileId: init.profileId,
+    mode: init.mode ?? "chat",
+    permission: init.permission ?? "ask",
     createdAt: now2,
     updatedAt: now2
   };
@@ -326,12 +330,12 @@ async function listProfiles() {
 }
 
 // src/store/settings.ts
-var DEFAULT_SETTINGS = { ollamaUrl: "http://localhost:11434", model: "" };
+var DEFAULT_SETTINGS = { ollamaUrl: "http://localhost:11434", model: "", siteRules: {}, border: true };
 var KEY = "settings";
 var defaultArea = () => chrome.storage.local;
 async function getSettings(area = defaultArea()) {
   const stored = (await area.get(KEY))[KEY];
-  return { ...DEFAULT_SETTINGS, ...stored };
+  return { ...DEFAULT_SETTINGS, ...stored, siteRules: { ...stored?.siteRules } };
 }
 
 // node_modules/.pnpm/@ai-sdk+provider@4.0.35/node_modules/@ai-sdk/provider/dist/index.js
@@ -38206,6 +38210,16 @@ var PROBE_SOURCE = `(() => {
       l.place();
       return 1;
     },
+    border(on, color) {
+      let host = document.querySelector('[${OVERLAY_ATTR2}="border"]');
+      if (!on) { if (host) host.remove(); return; }
+      if (host) return;
+      host = document.createElement('div');
+      host.setAttribute('${OVERLAY_ATTR2}', 'border');
+      for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block'],
+        ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
+      document.documentElement.append(host);
+    },
     clearHighlights() {
       for (const name of highlights.keys()) CSS.highlights.delete(name);
       highlights.clear();
@@ -39374,6 +39388,11 @@ ${diff}` : head;
       await this.highlighter.element(target, color);
       this.#highlights.push({ url: url2, element: { role: target.record.role, name: target.record.name }, color });
       return `\u044D\u043B\u0435\u043C\u0435\u043D\u0442 [${args.ref}] ${target.record.role} "${target.record.name}" \u043E\u0431\u0432\u0435\u0434\u0451\u043D (\u0446\u0432\u0435\u0442 ${color})`;
+    });
+  }
+  /** The frame around a page the agent works on; best effort, a page that is gone has nothing to frame. */
+  async border(on) {
+    await probeEval(this.session, this.session.frames.main().frameId, this.observer.probes, `__assistant.border(${on}, 'rgba(124, 92, 255, 0.85)')`).catch(() => {
     });
   }
   clearHighlights() {

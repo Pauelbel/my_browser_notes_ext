@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Помощник",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "minimum_chrome_version": "128",
   "description": "ИИ-помощник в боковой панели на локальных моделях Ollama, с Markdown-заметками.",
   "permissions": [
     "sidePanel",
     "storage",
-    "debugger"
+    "debugger",
+    "tabs",
+    "tabGroups"
   ],
   "host_permissions": [
     "http://localhost/*",

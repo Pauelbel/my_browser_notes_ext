@@ -94,12 +94,14 @@ async function write(stores, fn, conversationId) {
   announce(conversationId);
   return result;
 }
+var withDefaults = (c2) => ({ ...c2, mode: c2.mode ?? "chat", permission: c2.permission ?? "ask" });
 async function listConversations() {
   const all = await done(database().transaction("conversations").objectStore("conversations").getAll());
-  return all.sort((a3, b) => b.updatedAt - a3.updatedAt);
+  return all.map(withDefaults).sort((a3, b) => b.updatedAt - a3.updatedAt);
 }
-function getConversation(id) {
-  return done(database().transaction("conversations").objectStore("conversations").get(id));
+async function getConversation(id) {
+  const found = await done(database().transaction("conversations").objectStore("conversations").get(id));
+  return found && withDefaults(found);
 }
 function updateConversation(tx, id, change) {
   const store = tx.objectStore("conversations");
@@ -3743,7 +3745,7 @@ function renderMarkdown(text2) {
 }
 
 // src/store/settings.ts
-var DEFAULT_SETTINGS = { ollamaUrl: "http://localhost:11434", model: "" };
+var DEFAULT_SETTINGS = { ollamaUrl: "http://localhost:11434", model: "", siteRules: {}, border: true };
 var KEY2 = "settings";
 function normalizeOllamaUrl(input) {
   let url = input.trim();
@@ -3755,7 +3757,7 @@ function normalizeOllamaUrl(input) {
 var defaultArea = () => chrome.storage.local;
 async function getSettings(area = defaultArea()) {
   const stored = (await area.get(KEY2))[KEY2];
-  return { ...DEFAULT_SETTINGS, ...stored };
+  return { ...DEFAULT_SETTINGS, ...stored, siteRules: { ...stored?.siteRules } };
 }
 async function saveSettings(patch, area = defaultArea()) {
   const next = { ...await getSettings(area), ...patch };

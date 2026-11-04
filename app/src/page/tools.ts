@@ -13,6 +13,7 @@ import {focusTarget, isChecked, isFocused, isSelect, selectOption, targetFacts, 
 import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
 import {waitForReady} from './readiness.ts';
+import {probeEval} from './probe.ts';
 import type {ONode} from './outline.ts';
 import {classify, USER_STEP, type Category} from './classify.ts';
 import {isSecretField} from './masking.ts';
@@ -390,6 +391,11 @@ export class PageTools {
       this.#highlights.push({url, element: {role: target.record.role, name: target.record.name}, color});
       return `элемент [${args.ref}] ${target.record.role} "${target.record.name}" обведён (цвет ${color})`;
     });
+  }
+
+  /** The frame around a page the agent works on; best effort, a page that is gone has nothing to frame. */
+  async border(on: boolean): Promise<void> {
+    await probeEval(this.session, this.session.frames.main().frameId, this.observer.probes, `__assistant.border(${on}, 'rgba(124, 92, 255, 0.85)')`).catch(() => {});
   }
 
   clearHighlights(): Promise<ToolResult> {

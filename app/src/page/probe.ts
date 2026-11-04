@@ -63,6 +63,16 @@ export const PROBE_SOURCE = `(() => {
       l.place();
       return 1;
     },
+    border(on, color) {
+      let host = document.querySelector('[${OVERLAY_ATTR}="border"]');
+      if (!on) { if (host) host.remove(); return; }
+      if (host) return;
+      host = document.createElement('div');
+      host.setAttribute('${OVERLAY_ATTR}', 'border');
+      for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block'],
+        ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
+      document.documentElement.append(host);
+    },
     clearHighlights() {
       for (const name of highlights.keys()) CSS.highlights.delete(name);
       highlights.clear();
