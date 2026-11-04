@@ -38854,6 +38854,16 @@ var isChecked = (session, t) => callOn(
   t.objectId,
   'function () { const c = this.control || this; return typeof c.checked === "boolean" ? c.checked : c.getAttribute("aria-checked") === "true"; }'
 );
+var targetFacts = (session, t) => callOn(session, t.frame, t.objectId, `function () {
+    const el = this.nodeType === 1 ? this : this.parentElement;
+    const control = el.control || el;
+    const form = control.form || el.closest('form');
+    const block = el.closest('form, section, article, li, tr, p, div') || el;
+    return {tag: control.tagName.toLowerCase(), type: (control.getAttribute('type') || '').toLowerCase(), inForm: Boolean(form),
+      formHasPassword: Boolean(form && form.querySelector('input[type=password]')),
+      attrs: {type: control.getAttribute('type') || '', autocomplete: control.getAttribute('autocomplete') || ''},
+      nearby: (block.innerText || '').replace(/s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || ''};
+  }`);
 var isSelect = (session, t) => callOn(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');
 
 // src/page/diff.ts
@@ -38882,6 +38892,63 @@ function renderDiff(d, max = 30) {
   if (count === 0) return "";
   if (count > max) return `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0441\u0438\u043B\u044C\u043D\u043E \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${count} \u0441\u0442\u0440\u043E\u043A), \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot`;
   return [...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n");
+}
+
+// src/page/classify.ts
+function vocabulary(words) {
+  const parts = words.map((w) => w.endsWith("*") ? `${w.slice(0, -1).replace(/\s+/g, "\\s+")}\\p{L}*` : w.replace(/\s+/g, "\\s+"));
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${parts.join("|")})(?![\\p{L}\\p{N}])`, "iu");
+}
+var PAY = vocabulary([
+  "\u043E\u043F\u043B\u0430\u0442*",
+  "\u043A\u0443\u043F\u0438\u0442\u044C",
+  "\u0437\u0430\u043A\u0430\u0437\u0430\u0442\u044C",
+  "\u043E\u0444\u043E\u0440\u043C\u0438\u0442\u044C \u0437\u0430\u043A\u0430\u0437",
+  "\u043F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u043E\u043F\u043B\u0430\u0442\u0435",
+  "\u043F\u043E\u0434\u043F\u0438\u0441\u0430\u0442\u044C\u0441\u044F",
+  "\u043F\u043E\u0436\u0435\u0440\u0442\u0432\u043E\u0432\u0430\u0442\u044C",
+  "\u043F\u0435\u0440\u0435\u0432\u0435\u0441\u0442\u0438 \u0434\u0435\u043D\u044C\u0433\u0438",
+  "\u043F\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u044C",
+  "pay",
+  "payment",
+  "buy",
+  "buy now",
+  "purchase",
+  "checkout",
+  "check out",
+  "place order",
+  "subscribe",
+  "donate",
+  "top up"
+]);
+var ACCESS = vocabulary(["\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C", "authorize", "allow access", "grant access", "connect account"]);
+var DELETE = vocabulary(["\u0443\u0434\u0430\u043B*", "\u0441\u0442\u0435\u0440\u0435\u0442\u044C", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0451", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0435", "delete", "remove", "erase", "destroy"]);
+var LOGOUT = vocabulary(["\u0432\u044B\u0439\u0442\u0438", "\u0432\u044B\u0445\u043E\u0434", "log out", "logout", "sign out"]);
+var SEND = vocabulary(["\u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C", "\u043E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u0442\u044C", "send", "post", "publish", "reply"]);
+var GENERIC_CONFIRM = vocabulary(["\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C", "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C", "confirm", "continue"]);
+var MONEY = /\d[\d\s.,]*\s*(₽|руб|\$|€|usd|eur)/iu;
+var fold2 = (s) => s.replace(/ё/gi, "\u0435");
+function classify(f) {
+  if (f.action === "type") return f.secretField ? "secret" : null;
+  const name5 = fold2(f.name);
+  if (PAY.test(name5) || GENERIC_CONFIRM.test(name5) && (MONEY.test(name5) || MONEY.test(f.nearbyText))) return "pay";
+  if (MONEY.test(name5) && f.action === "activate" && ["button", "link", "clickable"].includes(f.role)) return "pay";
+  if (ACCESS.test(name5)) return "access";
+  if (DELETE.test(name5)) return "delete";
+  if (LOGOUT.test(name5)) return "logout";
+  if (SEND.test(name5)) return "send";
+  const submits = f.action === "activate" ? f.inForm && (f.type === "submit" || f.type === "image" || f.tag === "button" && f.type === "") : f.inForm;
+  return submits ? "submit" : null;
+}
+
+// src/page/site.ts
+function siteOf(url2) {
+  try {
+    const u = new URL(url2);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
 }
 
 // src/page/highlight.ts
@@ -38941,10 +39008,20 @@ function checkColor(color) {
 }
 
 // src/page/tools.ts
+var CATEGORY_TEXT = {
+  pay: "\u043E\u043F\u043B\u0430\u0442\u0430",
+  access: "\u0432\u044B\u0434\u0430\u0447\u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u0430",
+  secret: "\u0432\u0432\u043E\u0434 \u0441\u0435\u043A\u0440\u0435\u0442\u0430",
+  delete: "\u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435",
+  logout: "\u0432\u044B\u0445\u043E\u0434 \u0438\u0437 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430",
+  send: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430",
+  submit: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u0444\u043E\u0440\u043C\u044B"
+};
+var ORDER = ["pay", "access", "secret", "delete", "logout", "send", "submit"];
 var PAGE_START = "<<<page-content>>>";
 var NAVIGATION_TIMEOUT_MS = 15e3;
 var WAIT_POLL_MS = 250;
-var fold2 = (s) => s.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
+var fold3 = (s) => s.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
 var flat = (nodes) => nodes.flatMap((n) => [n, ...flat(n.children)]);
 function normalizeUrl(input2) {
   const url2 = input2.trim();
@@ -38978,9 +39055,11 @@ var PageTools = class {
   #highlights = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog;
+  gate;
   constructor(session, options) {
     this.session = session;
     this.budget = options.budget;
+    this.gate = options.gate;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
@@ -39036,9 +39115,15 @@ var PageTools = class {
    * One action on one label: resolve, check, watch, dispatch, settle, describe again. Retries happen only before
    * dispatch; after it, a failure says the event was sent.
    */
-  async #act(verb, ref, needs, dispatch) {
-    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
-    const actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+  async #act(verb, ref, needs, dispatch, actions = []) {
+    let target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    let actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    const verdict = await this.#gate(verb, ref, target, actions);
+    if (verdict === "user-did-it") return `${verb} [${ref}] ${target.record.role} "${target.record.name}": \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
+    if (verdict === "asked") {
+      target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+      actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    }
     const before = await this.#describe();
     return this.#dispatchAndReport(
       `${verb} [${ref}] ${target.record.role} "${target.record.name}"`,
@@ -39047,6 +39132,31 @@ var PageTools = class {
       (dialog) => dispatch(target, actionable, dialog),
       target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : ""
     );
+  }
+  /** Classifies the action and asks the gate. 'go' when nothing needed asking. */
+  async #gate(verb, ref, target, actions) {
+    if (!actions.length) return "go";
+    const facts = await targetFacts(this.session, target);
+    if (facts.href && this.gate?.blocked(siteOf(facts.href))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(facts.href)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
+    if (!this.gate) return "go";
+    const found = actions.map((action) => classify({
+      action,
+      role: target.record.role,
+      name: target.record.name,
+      tag: facts.tag,
+      type: facts.type,
+      inForm: facts.inForm,
+      formHasPassword: facts.formHasPassword,
+      secretField: isSecretField(facts.attrs),
+      nearbyText: facts.nearby
+    })).filter((c) => c !== null);
+    if (!found.length) return "go";
+    const category = ORDER.find((c) => found.includes(c));
+    const url2 = this.session.frames.main().url;
+    const answer = await this.gate.check({ action: verb, ref, role: target.record.role, name: target.record.name, category, site: siteOf(url2), url: url2 });
+    if (answer.decision === "allow") return "asked";
+    if (answer.decision === "user-did-it") return "user-did-it";
+    throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B: ${verb} \xAB${target.record.name}\xBB (${CATEGORY_TEXT[category]}). \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E; \u043D\u0435 \u043F\u044B\u0442\u0430\u0439\u0442\u0435\u0441\u044C \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u044D\u0442\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u043C.`);
   }
   async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "") {
     const watch = await startWatch(this.session, this.observer.probes, frameIds);
@@ -39094,7 +39204,7 @@ var PageTools = class {
 ${diff}` : head;
   }
   click(args) {
-    return this.run(() => this.#act("click", args.ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog)));
+    return this.run(() => this.#act("click", args.ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog), ["activate"]));
   }
   hover(args) {
     return this.run(() => this.#act("hover", args.ref, { pointer: true }, async (_t, a) => {
@@ -39110,7 +39220,7 @@ ${diff}` : head;
         if (r.dialog) return r;
       }
       return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
-    }));
+    }, args.submit ? ["type", "enter"] : ["type"]));
   }
   set(args) {
     return this.run(async () => {
@@ -39125,12 +39235,15 @@ ${diff}` : head;
         if (r.dialog) return r;
         if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${args.ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
         return { note: want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E" };
-      });
+      }, ["activate"]);
     });
   }
   press(args) {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError("NOT_FOUND", `\u041A\u043B\u0430\u0432\u0438\u0448\u0430 ${args.key} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(KEYS).join(", ")}.`);
+      if (!args.ref && (args.key === "Enter" || args.key === "Space")) {
+        throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${args.key} \u0443\u043A\u0430\u0436\u0438\u0442\u0435 ref \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430: \u0442\u0430\u043A \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442\u0441\u044F.`);
+      }
       if (args.ref) {
         const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
         await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
@@ -39138,6 +39251,11 @@ ${diff}` : head;
         });
         if (!await isFocused(this.session, target)) {
           throw new PageError("NOT_EDITABLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref} \u043D\u0435 \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442 \u0444\u043E\u043A\u0443\u0441 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B: \u043A\u043B\u0430\u0432\u0438\u0448\u0430 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430. \u0414\u043B\u044F \u043D\u0435\u0433\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439\u0442\u0435 click.`);
+        }
+        if (args.key === "Enter" || args.key === "Space") {
+          const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
+          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
+          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(
@@ -39200,6 +39318,7 @@ ${diff}` : head;
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
         } else {
           const url2 = normalizeUrl(args.url ?? "");
+          if (this.gate?.blocked(siteOf(url2))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(url2)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C.`);
           what = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${url2}`;
           const r = await cdp.send("Page.navigate", { url: url2 });
           if (r.errorText) throw new PageError("NOT_FOUND", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C ${url2}: ${r.errorText}.`);
@@ -39222,12 +39341,12 @@ ${diff}` : head;
         return `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0433\u043E\u0442\u043E\u0432\u0430 \u0437\u0430 ${r.waitedMs} \u043C\u0441`;
       }
       const record2 = args.ref ? this.refs.get(args.ref) : void 0;
-      const want = args.text ? fold2(args.text) : "";
+      const want = args.text ? fold3(args.text) : "";
       const started = Date.now();
       for (; ; ) {
         const { roots } = await this.observer.quick();
         const nodes = flat(roots);
-        const present = record2 ? nodes.some((n) => n.backendNodeId === record2.backendNodeId && n.loaderId === record2.loaderId) : nodes.some((n) => fold2(`${n.name} ${n.value ?? ""}`).includes(want));
+        const present = record2 ? nodes.some((n) => n.backendNodeId === record2.backendNodeId && n.loaderId === record2.loaderId) : nodes.some((n) => fold3(`${n.name} ${n.value ?? ""}`).includes(want));
         if (present !== Boolean(args.gone)) {
           const subject = args.text ? `\u0442\u0435\u043A\u0441\u0442 \xAB${args.text}\xBB` : `\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref}`;
           return `${subject} ${args.gone ? "\u0438\u0441\u0447\u0435\u0437" : "\u043F\u043E\u044F\u0432\u0438\u043B\u0441\u044F"} \u0447\u0435\u0440\u0435\u0437 ${Date.now() - started} \u043C\u0441`;
@@ -39287,6 +39406,15 @@ ${diff}` : head;
     return this.run(async () => {
       if (!this.dialog) throw new PageError("NOT_FOUND", "\u0421\u0435\u0439\u0447\u0430\u0441 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043D\u0435\u0442 \u0434\u0438\u0430\u043B\u043E\u0433\u0430.");
       const was = this.dialog;
+      if (was.type === "prompt" && this.gate) {
+        const url2 = this.session.frames.main().url;
+        const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category: "secret", site: siteOf(url2), url: url2 });
+        if (answer.decision === "user-did-it") {
+          this.dialog = void 0;
+          return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
+        }
+        throw new PageError("USER_DECLINED", "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u2014 \u0448\u0430\u0433 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043E\u043D \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B.");
+      }
       await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
       this.dialog = void 0;
       await new Promise((r) => setTimeout(r, 300));

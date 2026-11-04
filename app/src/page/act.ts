@@ -52,4 +52,17 @@ export async function selectOption(session: PageSession, t: Target, value: strin
 export const isChecked = (session: PageSession, t: Target) => callOn<boolean>(session, t.frame, t.objectId,
   'function () { const c = this.control || this; return typeof c.checked === "boolean" ? c.checked : c.getAttribute("aria-checked") === "true"; }');
 
+/** The facts the classifier needs about a target: what it is, whether it submits a form, what is written around it. */
+export const targetFacts = (session: PageSession, t: Target) => callOn<{tag: string; type: string; inForm: boolean; formHasPassword: boolean;
+  attrs: Record<string, string>; nearby: string; href: string}>(session, t.frame, t.objectId, `function () {
+    const el = this.nodeType === 1 ? this : this.parentElement;
+    const control = el.control || el;
+    const form = control.form || el.closest('form');
+    const block = el.closest('form, section, article, li, tr, p, div') || el;
+    return {tag: control.tagName.toLowerCase(), type: (control.getAttribute('type') || '').toLowerCase(), inForm: Boolean(form),
+      formHasPassword: Boolean(form && form.querySelector('input[type=password]')),
+      attrs: {type: control.getAttribute('type') || '', autocomplete: control.getAttribute('autocomplete') || ''},
+      nearby: (block.innerText || '').replace(/\s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || ''};
+  }`);
+
 export const isSelect = (session: PageSession, t: Target) => callOn<boolean>(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');

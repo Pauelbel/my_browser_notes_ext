@@ -1,0 +1,15 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"><title>Опасные действия</title></head><body>
+<h1>Опасные действия</h1>
+<div id="status">Статус: ждём</div>
+<button>Удалить черновик</button>
+<button>Выйти</button>
+<button>Оплатить 1 990 ₽</button>
+<button>Разрешить доступ</button>
+<form onsubmit="event.preventDefault(); document.getElementById('status').textContent = 'Сохранено: ' + this.comment.value">
+  <p><label>Комментарий <input name="comment"></label></p>
+  <p><label>Пароль <input name="pw" type="password"></label></p>
+  <button type="submit">Сохранить</button>
+</form>
+<p><a href="basic.html">Обычная ссылка</a></p>
+<script>for (const b of document.querySelectorAll('body > button')) b.onclick = () => document.getElementById('status').textContent = b.textContent;</script>
+</body></html>

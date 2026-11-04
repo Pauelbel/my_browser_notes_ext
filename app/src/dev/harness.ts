@@ -38,6 +38,16 @@ const layer = {
     const r = await tools.session.cdp.send<{result: {value: unknown}}>('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true});
     return r.result.value;
   },
+  questions: [] as unknown[],
+  /** A scripted gate for scenarios: answers in order, and the blocked sites. */
+  async setGate(tabId: number, script: {answers: string[]; blocked: string[]}) {
+    const tools = await toolsFor(tabId, 26214);
+    const answers = [...script.answers];
+    tools.gate = {
+      check: async q => { layer.questions.push(q); return {decision: (answers.shift() ?? 'deny') as 'allow'}; },
+      blocked: site => script.blocked.includes(site),
+    };
+  },
   async done(tabId: number) {
     const tools = await open.get(tabId);
     open.delete(tabId);

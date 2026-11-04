@@ -9,17 +9,30 @@ import {resolveTarget, type Target} from './resolve.ts';
 import {waitActionable, type Actionable} from './actionability.ts';
 import {startWatch, type Evidence} from './evidence.ts';
 import {click, hover, pressKey, wheel, watchDialog, KEYS, type DialogInfo, type KeyName} from './input.ts';
-import {focusTarget, isChecked, isFocused, isSelect, selectOption, typeInto} from './act.ts';
+import {focusTarget, isChecked, isFocused, isSelect, selectOption, targetFacts, typeInto} from './act.ts';
 import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
 import {waitForReady} from './readiness.ts';
 import type {ONode} from './outline.ts';
+import {classify, USER_STEP, type Category} from './classify.ts';
+import {isSecretField} from './masking.ts';
+import {siteOf} from './site.ts';
 import {checkColor, Highlighter, type HighlightColor} from './highlight.ts';
 
 export interface ToolResult {
   text: string;
   ok: boolean;
 }
+
+export interface GateQuestion { action: string; ref: string; role: string; name: string; category: Category; site: string; url: string }
+export type GateAnswer = {decision: 'allow'} | {decision: 'deny'} | {decision: 'user-did-it'} | {decision: 'cancel'};
+/** What the agent above the layer decides about a dangerous action; the layer only asks and obeys. */
+export interface Gate { check(q: GateQuestion): Promise<GateAnswer>; blocked(site: string): boolean }
+
+const CATEGORY_TEXT: Record<Category, string> = {
+  pay: 'оплата', access: 'выдача доступа', secret: 'ввод секрета', delete: 'удаление', logout: 'выход из аккаунта', send: 'отправка', submit: 'отправка формы',
+};
+const ORDER: Category[] = ['pay', 'access', 'secret', 'delete', 'logout', 'send', 'submit'];
 
 export const PAGE_START = '<<<page-content>>>';
 const NAVIGATION_TIMEOUT_MS = 15000;
@@ -68,9 +81,12 @@ export class PageTools {
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog: DialogInfo | undefined;
 
-  constructor(session: PageSession, options: {budget: number}) {
+  gate: Gate | undefined;
+
+  constructor(session: PageSession, options: {budget: number; gate?: Gate}) {
     this.session = session;
     this.budget = options.budget;
+    this.gate = options.gate;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
@@ -126,13 +142,39 @@ export class PageTools {
    * dispatch; after it, a failure says the event was sent.
    */
   async #act(verb: string, ref: string, needs: {pointer: boolean; editable?: boolean},
-    dispatch: (t: Target, a: Actionable, dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>): Promise<string> {
-    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
-    const actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    dispatch: (t: Target, a: Actionable, dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>,
+    actions: ('activate' | 'enter' | 'type')[] = []): Promise<string> {
+    let target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    let actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    const verdict = await this.#gate(verb, ref, target, actions);
+    if (verdict === 'user-did-it') return `${verb} [${ref}] ${target.record.role} "${target.record.name}": шаг выполнен пользователем сам, событие помощником не отправлено`;
+    if (verdict === 'asked') {
+      // The page may have changed while the user decided: the target is checked again from scratch.
+      target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+      actionable = await waitActionable(this.session, target, needs, this.observer.probes);
+    }
     // The baseline comes after the checks, which may have scrolled the target into view: scrolling is not a reaction.
     const before = await this.#describe();
     return this.#dispatchAndReport(`${verb} [${ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
       dialog => dispatch(target, actionable, dialog), target.record.proxy === 'label' ? ` (клик по связанной подписи "${target.record.name}")` : '');
+  }
+
+  /** Classifies the action and asks the gate. 'go' when nothing needed asking. */
+  async #gate(verb: string, ref: string, target: Target, actions: ('activate' | 'enter' | 'type')[]): Promise<'go' | 'asked' | 'user-did-it'> {
+    if (!actions.length) return 'go';
+    const facts = await targetFacts(this.session, target);
+    if (facts.href && this.gate?.blocked(siteOf(facts.href))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(facts.href)} заблокирован пользователем: ссылку не открываю.`);
+    if (!this.gate) return 'go';
+    const found = actions.map(action => classify({action, role: target.record.role, name: target.record.name, tag: facts.tag, type: facts.type,
+      inForm: facts.inForm, formHasPassword: facts.formHasPassword, secretField: isSecretField(facts.attrs), nearbyText: facts.nearby}))
+      .filter((c): c is Category => c !== null);
+    if (!found.length) return 'go';
+    const category = ORDER.find(c => found.includes(c))!;
+    const url = this.session.frames.main().url;
+    const answer = await this.gate.check({action: verb, ref, role: target.record.role, name: target.record.name, category, site: siteOf(url), url});
+    if (answer.decision === 'allow') return 'asked';
+    if (answer.decision === 'user-did-it') return 'user-did-it';
+    throw new PageError('USER_DECLINED', `Пользователь не разрешил: ${verb} «${target.record.name}» (${CATEGORY_TEXT[category]}). Событие не отправлено; не пытайтесь сделать это другим способом.`);
   }
 
   async #dispatchAndReport(what: string, before: string[], frameIds: string[],
@@ -180,7 +222,7 @@ export class PageTools {
   }
 
   click(args: {ref: string}): Promise<ToolResult> {
-    return this.run(() => this.#act('click', args.ref, {pointer: true}, (_t, a, dialog) => click(this.session, a.point, dialog)));
+    return this.run(() => this.#act('click', args.ref, {pointer: true}, (_t, a, dialog) => click(this.session, a.point, dialog), ['activate']));
   }
 
   hover(args: {ref: string}): Promise<ToolResult> {
@@ -193,7 +235,7 @@ export class PageTools {
       await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
       if (args.submit) { const r = await pressKey(this.session, 'Enter', dialog); if (r.dialog) return r; }
       return {note: `введено символов: ${args.text.length}${args.submit ? ', нажат Enter' : ''}`};
-    }));
+    }, args.submit ? ['type', 'enter'] : ['type']));
   }
 
   set(args: {ref: string; value: string | boolean}): Promise<ToolResult> {
@@ -209,13 +251,16 @@ export class PageTools {
         if (r.dialog) return r;
         if (await isChecked(this.session, t) !== want) throw new PageError('VALUE_MISMATCH', `Состояние элемента ${args.ref} не изменилось после клика.`, true);
         return {note: want ? 'включено' : 'выключено'};
-      });
+      }, ['activate']);
     });
   }
 
   press(args: {key: KeyName; ref?: string}): Promise<ToolResult> {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError('NOT_FOUND', `Клавиша ${args.key} не поддерживается. Есть: ${Object.keys(KEYS).join(', ')}.`);
+      if (!args.ref && (args.key === 'Enter' || args.key === 'Space')) {
+        throw new PageError('NOT_FOUND', `Для ${args.key} укажите ref элемента: так помощник знает, что именно нажимается.`);
+      }
       if (args.ref) {
         // The key goes to whatever has focus, so the target must hold it before anything is sent.
         const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
@@ -223,6 +268,11 @@ export class PageTools {
         await this.session.cdp.send('DOM.focus', {backendNodeId: target.record.backendNodeId}, target.frame.sessionId).catch(() => {});
         if (!await isFocused(this.session, target)) {
           throw new PageError('NOT_EDITABLE', `Элемент ${args.ref} не принимает фокус клавиатуры: клавиша не отправлена. Для него используйте click.`);
+        }
+        if (args.key === 'Enter' || args.key === 'Space') {
+          const control = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'clickable'].includes(target.record.role);
+          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? 'activate' : 'enter']);
+          if (verdict === 'user-did-it') return `press ${args.key} [${args.ref}]: шаг выполнен пользователем сам, событие помощником не отправлено`;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(`press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
@@ -280,6 +330,7 @@ export class PageTools {
           await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
         } else {
           const url = normalizeUrl(args.url ?? '');
+          if (this.gate?.blocked(siteOf(url))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(url)} заблокирован пользователем.`);
           what = `переход на ${url}`;
           const r = await cdp.send<{errorText?: string}>('Page.navigate', {url});
           if (r.errorText) throw new PageError('NOT_FOUND', `Не удалось открыть ${url}: ${r.errorText}.`);
@@ -374,6 +425,13 @@ export class PageTools {
     return this.run(async () => {
       if (!this.dialog) throw new PageError('NOT_FOUND', 'Сейчас на странице нет диалога.');
       const was = this.dialog;
+      // Answering a page's prompt() is the user's own step: they may be asked for anything there.
+      if (was.type === 'prompt' && this.gate) {
+        const url = this.session.frames.main().url;
+        const answer = await this.gate.check({action: 'handle_dialog', ref: '', role: 'dialog', name: was.message, category: 'secret', site: siteOf(url), url});
+        if (answer.decision === 'user-did-it') { this.dialog = undefined; return `диалог «${was.message}»: пользователь ответил сам`; }
+        throw new PageError('USER_DECLINED', 'Ответ на диалог страницы — шаг пользователя; он не ответил.');
+      }
       await this.session.cdp.send('Page.handleJavaScriptDialog', {accept: args.accept, promptText: args.text});
       this.dialog = undefined;
       await new Promise(r => setTimeout(r, 300));

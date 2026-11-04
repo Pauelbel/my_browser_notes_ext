@@ -5,3 +5,6 @@ export {PageError, type PageErrorCode} from './errors.ts';
 export type {FrameInfo} from './frames.ts';
 export {PageTools, type ToolResult, PAGE_START, PAGE_END} from './tools.ts';
 export {pageBudget} from './render.ts';
+export {siteOf} from './site.ts';
+export {classify, USER_STEP, type Category} from './classify.ts';
+export type {Gate, GateQuestion, GateAnswer} from './tools.ts';

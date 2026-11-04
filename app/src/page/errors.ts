@@ -1,7 +1,8 @@
 // Typed errors of the page layer. The message is for the model; `delivered` says whether an input event was sent,
 // because repeating a delivered action could repeat its effect.
 export type PageErrorCode = 'PAGE_NOT_SUPPORTED' | 'DETACHED' | 'TIMEOUT' | 'REF_UNKNOWN' | 'REF_STALE' | 'NOT_VISIBLE'
-  | 'NOT_ENABLED' | 'NOT_STABLE' | 'COVERED' | 'NOT_EDITABLE' | 'DIALOG_OPEN' | 'VALUE_MISMATCH' | 'NOT_FOUND' | 'INTERNAL';
+  | 'NOT_ENABLED' | 'NOT_STABLE' | 'COVERED' | 'NOT_EDITABLE' | 'DIALOG_OPEN' | 'VALUE_MISMATCH' | 'NOT_FOUND' | 'INTERNAL'
+  | 'USER_DECLINED' | 'SITE_BLOCKED';
 
 export class PageError extends Error {
   code: PageErrorCode;
