@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const tableRequire = createRequire(require.resolve('@tiptap/extension-table'));
 await build({entryPoints:['editor-source.js'],bundle:true,format:'esm',outfile:'vendor/editor.js',minify:true,legalComments:'linked',target:'chrome122',
   alias:{'@tiptap/pm/tables':tableRequire.resolve('@tiptap/pm/tables')}});
-await build({entryPoints:{background:'src/background/index.ts',panel:'src/ui/main.ts'},bundle:true,format:'esm',outdir:'dist',target:'chrome128',legalComments:'none'});
+await build({entryPoints:{background:'src/background/index.ts',panel:'src/ui/main.ts',dev:'src/dev/harness.ts'},bundle:true,format:'esm',outdir:'dist',target:'chrome128',legalComments:'none'});
 const notices = [];
 for (const entry of await readdir('node_modules/.pnpm')) {
   const base = path.join('node_modules/.pnpm',entry,'node_modules');

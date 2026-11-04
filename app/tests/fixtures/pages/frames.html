@@ -1,0 +1,6 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Фреймы</title></head><body>
+<h1>Страница с фреймами</h1>
+<iframe id="same" src="frame-inner.html?name=Свой" width="400" height="160"></iframe>
+<iframe id="cross" width="400" height="160" style="margin-left:40px"></iframe>
+<script>const x = new URLSearchParams(location.search).get('x'); if (x) document.getElementById('cross').src = x + '?name=Чужой';</script>
+</body></html>

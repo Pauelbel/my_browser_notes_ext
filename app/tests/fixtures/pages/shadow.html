@@ -1,0 +1,12 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Shadow DOM</title></head><body>
+<h1>Shadow DOM</h1>
+<div id="open-host"></div><div id="closed-host"></div>
+<div id="status">Статус: ждём</div>
+<script>
+const say = t => () => document.getElementById('status').textContent = t;
+const o = document.getElementById('open-host').attachShadow({mode: 'open'});
+o.innerHTML = '<button>Открытая тень</button>'; o.querySelector('button').onclick = say('Открытая нажата');
+const c = document.getElementById('closed-host').attachShadow({mode: 'closed'});
+c.innerHTML = '<button>Закрытая тень</button>'; c.querySelector('button').onclick = say('Закрытая нажата');
+</script>
+</body></html>

@@ -1,0 +1,14 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Форма</title><style>.visually-hidden{position:absolute;opacity:0;width:1px;height:1px;}</style></head><body>
+<h1>Форма регистрации</h1>
+<form id="f" onsubmit="event.preventDefault(); const d = new FormData(this); document.getElementById('status').textContent = 'Отправлено: ' + d.get('name') + ' / ' + d.get('email') + ' / ' + d.get('city') + ' / ' + (d.get('agree') ? 'согласие' : 'нет') + ' / ' + (d.get('news') ? 'рассылка' : 'без рассылки');">
+<p><label>Имя <input name="name"></label></p>
+<p><label>Email <input name="email" type="email"></label></p>
+<p><label>Пароль <input name="password" type="password" id="pw"></label></p>
+<p><label>Город <select name="city"><option value="">—</option><option value="msk">Москва</option><option value="spb">Санкт-Петербург</option></select></label></p>
+<p><label><input type="checkbox" name="agree"> Согласен с правилами</label></p>
+<p><input type="checkbox" name="news" id="news" class="visually-hidden"><label for="news" style="cursor:pointer;border:1px solid #888;padding:4px">Получать рассылку</label></p>
+<button type="submit">Отправить</button>
+</form>
+<div id="status">Статус: не отправлено</div>
+<script>document.getElementById('pw').value = 'секрет-12345';</script>
+</body></html>

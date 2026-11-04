@@ -1,0 +1,6 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Внутренний фрейм</title></head><body style="margin:8px">
+<p id="label"></p><button id="b">Кнопка во фрейме</button><div id="status">Статус: ждём</div>
+<script>const n = new URLSearchParams(location.search).get('name') || 'Фрейм';
+document.getElementById('label').textContent = n + ' фрейм'; document.getElementById('b').textContent = 'Кнопка: ' + n;
+document.getElementById('b').onclick = () => document.getElementById('status').textContent = n + ' нажата';</script>
+</body></html>

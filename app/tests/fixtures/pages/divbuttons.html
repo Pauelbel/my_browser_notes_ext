@@ -1,0 +1,9 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Кнопки из div</title><style>.btn{display:inline-block;padding:6px 12px;border:1px solid #444;cursor:pointer;margin:4px}</style></head><body>
+<h1>Кнопки из div</h1>
+<div class="btn" id="d1">Сохранить черновик</div>
+<div class="btn" id="d2"><span>Удалить черновик</span></div>
+<div id="status">Статус: ждём</div>
+<script>
+for (const d of document.querySelectorAll('.btn')) d.addEventListener('click', () => document.getElementById('status').textContent = d.textContent + ' нажата');
+</script>
+</body></html>

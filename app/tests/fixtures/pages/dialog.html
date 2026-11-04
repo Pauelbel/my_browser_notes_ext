@@ -1,0 +1,6 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="style.css"><title>Диалоги</title></head><body>
+<h1>Диалоги</h1>
+<button onclick="alert('Привет из alert'); document.getElementById('status').textContent='alert закрыт'">Показать alert</button>
+<button onclick="document.getElementById('status').textContent = confirm('Вы уверены?') ? 'Подтверждено' : 'Отменено'">Показать confirm</button>
+<div id="status">Статус: ждём</div>
+</body></html>
