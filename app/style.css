@@ -110,7 +110,7 @@ svg { display: block; }
 .popover button { padding: 4px 8px; border-radius: 4px; text-align: left; white-space: nowrap; }
 .popover button:hover, .popover button.focused { background: var(--hover); }
 .danger { color: var(--danger); }
-#tableContext { display: flex; gap: 2px; font-size: 12px; zoom: var(--text-zoom, 1); }
+#tableContext { display: flex; gap: 2px; font-size: 12px; }
 .table-size { font-size: 11px; color: var(--muted); padding: 2px 4px 6px; }
 .table-grid { display: grid; grid-template-columns: repeat(6, 16px); gap: 3px; }
 .table-grid button { width: 16px; height: 16px; padding: 0; border: 1px solid var(--line); border-radius: 2px; }
