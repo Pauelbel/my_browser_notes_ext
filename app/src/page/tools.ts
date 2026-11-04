@@ -14,6 +14,7 @@ import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
 import {waitForReady} from './readiness.ts';
 import type {ONode} from './outline.ts';
+import {checkColor, Highlighter, type HighlightColor} from './highlight.ts';
 
 export interface ToolResult {
   text: string;
@@ -55,6 +56,9 @@ export class PageTools {
   readonly refs: RefRegistry;
   readonly observer: Observer;
   budget: number;
+  readonly highlighter: Highlighter;
+  /** Highlights made in this session, by page address, so going back to a page shows them again. */
+  readonly #highlights: {url: string; text?: string; element?: {role: string; name: string}; color: HighlightColor}[] = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog: DialogInfo | undefined;
 
@@ -63,6 +67,8 @@ export class PageTools {
     this.budget = options.budget;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
+    this.highlighter = new Highlighter(session, this.observer.probes);
+    session.cdp.on((method, _params, sessionId) => { if (method === 'Page.loadEventFired' && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300); });
     session.cdp.on(method => { if (method === 'Page.javascriptDialogClosed') this.dialog = undefined; });
     session.cdp.on((method, params) => { if (method === 'Page.javascriptDialogOpening') this.dialog = {type: params.type, message: params.message}; });
     // A frame that loads a new document makes its labels stale.
@@ -290,6 +296,53 @@ export class PageTools {
         await new Promise(r => setTimeout(r, WAIT_POLL_MS));
       }
     });
+  }
+
+  highlight(args: {ref?: string; text?: string; color?: string}): Promise<ToolResult> {
+    return this.run(async () => {
+      const color = checkColor(args.color);
+      if (Boolean(args.ref) === Boolean(args.text)) throw new PageError('NOT_FOUND', 'Укажите ровно одно: ref (элемент) или text (фрагмент текста).');
+      const url = this.session.frames.main().url;
+      if (args.text) {
+        const count = await this.highlighter.text(args.text, color);
+        if (!count) throw new PageError('NOT_FOUND', `Текст «${args.text}» не найден среди видимого текста страницы.`);
+        this.#highlights.push({url, text: args.text, color});
+        return `выделено мест: ${count} (цвет ${color})`;
+      }
+      const target = await resolveTarget(this.session, this.refs, args.ref!, this.observer.probes);
+      await this.highlighter.element(target, color);
+      this.#highlights.push({url, element: {role: target.record.role, name: target.record.name}, color});
+      return `элемент [${args.ref}] ${target.record.role} "${target.record.name}" обведён (цвет ${color})`;
+    });
+  }
+
+  clearHighlights(): Promise<ToolResult> {
+    return this.run(async () => {
+      await this.highlighter.clear();
+      const url = this.session.frames.main().url;
+      for (let i = this.#highlights.length - 1; i >= 0; i--) if (this.#highlights[i].url === url) this.#highlights.splice(i, 1);
+      return 'подсветка снята';
+    });
+  }
+
+  async #restoreHighlights(): Promise<void> {
+    const url = this.session.frames.main().url;
+    const mine = this.#highlights.filter(h => h.url === url);
+    if (!mine.length) return;
+    try {
+      for (const h of mine.filter(h => h.text)) await this.highlighter.text(h.text!, h.color);
+      const wanted = mine.filter(h => h.element);
+      if (!wanted.length) return;
+      const {roots} = await this.observer.quick();
+      for (const h of wanted) {
+        const node = flat(roots).find(n => n.role === h.element!.role && n.name === h.element!.name && n.backendNodeId !== undefined);
+        if (!node) continue;
+        const target = await resolveTarget(this.session, this.refs, this.refs.assign(node), this.observer.probes);
+        await this.highlighter.element(target, h.color);
+      }
+    } catch {
+      // Restoring is best effort: the page may already be changing again.
+    }
   }
 
   handleDialog(args: {accept: boolean; text?: string}): Promise<ToolResult> {

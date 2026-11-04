@@ -14,7 +14,60 @@ export const PROBE_SOURCE = `(() => {
     for (const r of records) if (!inOverlay(r.target)) state.mutations++;
   }).observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, {once: true});
+  const fold = s => s.toLowerCase().replace(/ё/g, 'е');
+  const highlights = new Map();
+  let layer = null;
+  const ensureLayer = () => {
+    if (layer && layer.host.isConnected) return layer;
+    const host = document.createElement('div');
+    host.setAttribute('${OVERLAY_ATTR}', '');
+    for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
+    const root = host.attachShadow({mode: 'closed'});
+    document.documentElement.append(host);
+    layer = {host, root, boxes: []};
+    const place = () => { for (const {el, box, color} of layer.boxes) { const r = el.getBoundingClientRect();
+      box.style.cssText = 'position:fixed;box-sizing:content-box;border-radius:4px;pointer-events:none;border:3px solid ' + color
+        + ';left:' + (r.left - 3) + 'px;top:' + (r.top - 3) + 'px;width:' + r.width + 'px;height:' + r.height + 'px;display:' + (el.isConnected ? 'block' : 'none'); } };
+    layer.place = place;
+    let queued = false;
+    const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; place(); }); } };
+    addEventListener('scroll', later, {capture: true, passive: true});
+    addEventListener('resize', later, {passive: true});
+    return layer;
+  };
   globalThis.__assistant = {
+    highlightText(query, name) {
+      const want = fold(query); if (!want) return 0;
+      const ranges = [];
+      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+      for (let node; (node = walker.nextNode());) {
+        const parent = node.parentElement;
+        if (!parent || inOverlay(node) || !parent.getClientRects().length || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(parent.tagName)) continue;
+        const text = fold(node.data);
+        for (let i = text.indexOf(want); i >= 0; i = text.indexOf(want, i + want.length)) {
+          const r = new Range(); r.setStart(node, i); r.setEnd(node, i + want.length); ranges.push(r);
+        }
+      }
+      if (!ranges.length) return 0;
+      const h = highlights.get(name) || new Highlight();
+      for (const r of ranges) h.add(r);
+      highlights.set(name, h);
+      CSS.highlights.set(name, h);
+      return ranges.length;
+    },
+    highlightElement(el, color) {
+      const l = ensureLayer();
+      const box = document.createElement('div');
+      l.root.append(box);
+      l.boxes.push({el, box, color});
+      l.place();
+      return 1;
+    },
+    clearHighlights() {
+      for (const name of highlights.keys()) CSS.highlights.delete(name);
+      highlights.clear();
+      if (layer) { layer.host.remove(); layer = null; }
+    },
     state,
     readyState: () => document.readyState,
     mutations: () => state.mutations,

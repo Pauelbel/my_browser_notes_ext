@@ -654,7 +654,60 @@ var PROBE_SOURCE = `(() => {
     for (const r of records) if (!inOverlay(r.target)) state.mutations++;
   }).observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, {once: true});
+  const fold = s => s.toLowerCase().replace(/\u0451/g, '\u0435');
+  const highlights = new Map();
+  let layer = null;
+  const ensureLayer = () => {
+    if (layer && layer.host.isConnected) return layer;
+    const host = document.createElement('div');
+    host.setAttribute('${OVERLAY_ATTR2}', '');
+    for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
+    const root = host.attachShadow({mode: 'closed'});
+    document.documentElement.append(host);
+    layer = {host, root, boxes: []};
+    const place = () => { for (const {el, box, color} of layer.boxes) { const r = el.getBoundingClientRect();
+      box.style.cssText = 'position:fixed;box-sizing:content-box;border-radius:4px;pointer-events:none;border:3px solid ' + color
+        + ';left:' + (r.left - 3) + 'px;top:' + (r.top - 3) + 'px;width:' + r.width + 'px;height:' + r.height + 'px;display:' + (el.isConnected ? 'block' : 'none'); } };
+    layer.place = place;
+    let queued = false;
+    const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; place(); }); } };
+    addEventListener('scroll', later, {capture: true, passive: true});
+    addEventListener('resize', later, {passive: true});
+    return layer;
+  };
   globalThis.__assistant = {
+    highlightText(query, name) {
+      const want = fold(query); if (!want) return 0;
+      const ranges = [];
+      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+      for (let node; (node = walker.nextNode());) {
+        const parent = node.parentElement;
+        if (!parent || inOverlay(node) || !parent.getClientRects().length || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(parent.tagName)) continue;
+        const text = fold(node.data);
+        for (let i = text.indexOf(want); i >= 0; i = text.indexOf(want, i + want.length)) {
+          const r = new Range(); r.setStart(node, i); r.setEnd(node, i + want.length); ranges.push(r);
+        }
+      }
+      if (!ranges.length) return 0;
+      const h = highlights.get(name) || new Highlight();
+      for (const r of ranges) h.add(r);
+      highlights.set(name, h);
+      CSS.highlights.set(name, h);
+      return ranges.length;
+    },
+    highlightElement(el, color) {
+      const l = ensureLayer();
+      const box = document.createElement('div');
+      l.root.append(box);
+      l.boxes.push({el, box, color});
+      l.place();
+      return 1;
+    },
+    clearHighlights() {
+      for (const name of highlights.keys()) CSS.highlights.delete(name);
+      highlights.clear();
+      if (layer) { layer.host.remove(); layer = null; }
+    },
     state,
     readyState: () => document.readyState,
     mutations: () => state.mutations,
@@ -1316,6 +1369,62 @@ function renderDiff(d, max = 30) {
   return [...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n");
 }
 
+// src/page/highlight.ts
+var COLORS = {
+  yellow: { fill: "rgba(255, 230, 0, 0.6)", line: "#f5c400" },
+  green: { fill: "rgba(80, 220, 100, 0.45)", line: "#22a845" },
+  blue: { fill: "rgba(80, 160, 255, 0.4)", line: "#2f7de1" },
+  red: { fill: "rgba(255, 80, 80, 0.45)", line: "#e53935" },
+  orange: { fill: "rgba(255, 165, 0, 0.5)", line: "#f08c00" }
+};
+var STYLE_TEXT = Object.entries(COLORS).map(([name, c]) => `::highlight(assistant-${name}) { background-color: ${c.fill}; color: inherit; }`).join("\n");
+var Highlighter = class {
+  #session;
+  #probes;
+  /** Frames (by document) that already have the style sheet. */
+  #styled = /* @__PURE__ */ new Set();
+  constructor(session, probes) {
+    this.#session = session;
+    this.#probes = probes;
+  }
+  async #style(frameId) {
+    const frame = this.#session.frames.get(frameId);
+    if (!frame) return;
+    const key = `${frameId}|${frame.loaderId}`;
+    if (this.#styled.has(key)) return;
+    await this.#session.cdp.send("CSS.enable", {}, frame.sessionId);
+    const { styleSheetId } = await this.#session.cdp.send("CSS.createStyleSheet", { frameId }, frame.sessionId);
+    await this.#session.cdp.send("CSS.setStyleSheetText", { styleSheetId, text: STYLE_TEXT }, frame.sessionId);
+    this.#styled.add(key);
+  }
+  /** Highlights every visible occurrence of the text in every frame; returns how many. */
+  async text(text, color) {
+    let count = 0;
+    for (const frame of this.#session.frames.list()) {
+      try {
+        await this.#style(frame.frameId);
+        count += await probeEval(this.#session, frame.frameId, this.#probes, `__assistant.highlightText(${JSON.stringify(text)}, ${JSON.stringify(`assistant-${color}`)})`);
+      } catch {
+      }
+    }
+    return count;
+  }
+  async element(target, color) {
+    await callOn(this.#session, target.frame, target.objectId, `function (color) { return __assistant.highlightElement(this.nodeType === 1 ? this : this.parentElement, color); }`, [{ value: COLORS[color].line }]);
+  }
+  async clear() {
+    for (const frame of this.#session.frames.list()) {
+      await probeEval(this.#session, frame.frameId, this.#probes, "__assistant.clearHighlights()").catch(() => {
+      });
+    }
+  }
+};
+function checkColor(color) {
+  const c = color ?? "yellow";
+  if (!(c in COLORS)) throw new PageError("NOT_FOUND", `\u0426\u0432\u0435\u0442 ${color} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(COLORS).join(", ")}.`);
+  return c;
+}
+
 // src/page/tools.ts
 var PAGE_START = "<<<page-content>>>";
 var NAVIGATION_TIMEOUT_MS = 15e3;
@@ -1346,6 +1455,9 @@ var PageTools = class {
   refs;
   observer;
   budget;
+  highlighter;
+  /** Highlights made in this session, by page address, so going back to a page shows them again. */
+  #highlights = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog;
   constructor(session, options) {
@@ -1353,6 +1465,10 @@ var PageTools = class {
     this.budget = options.budget;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
+    this.highlighter = new Highlighter(session, this.observer.probes);
+    session.cdp.on((method, _params, sessionId) => {
+      if (method === "Page.loadEventFired" && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300);
+    });
     session.cdp.on((method) => {
       if (method === "Page.javascriptDialogClosed") this.dialog = void 0;
     });
@@ -1585,6 +1701,49 @@ ${diff}` : head;
         await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
       }
     });
+  }
+  highlight(args) {
+    return this.run(async () => {
+      const color = checkColor(args.color);
+      if (Boolean(args.ref) === Boolean(args.text)) throw new PageError("NOT_FOUND", "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u0440\u043E\u0432\u043D\u043E \u043E\u0434\u043D\u043E: ref (\u044D\u043B\u0435\u043C\u0435\u043D\u0442) \u0438\u043B\u0438 text (\u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442 \u0442\u0435\u043A\u0441\u0442\u0430).");
+      const url = this.session.frames.main().url;
+      if (args.text) {
+        const count = await this.highlighter.text(args.text, color);
+        if (!count) throw new PageError("NOT_FOUND", `\u0422\u0435\u043A\u0441\u0442 \xAB${args.text}\xBB \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0441\u0440\u0435\u0434\u0438 \u0432\u0438\u0434\u0438\u043C\u043E\u0433\u043E \u0442\u0435\u043A\u0441\u0442\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`);
+        this.#highlights.push({ url, text: args.text, color });
+        return `\u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043E \u043C\u0435\u0441\u0442: ${count} (\u0446\u0432\u0435\u0442 ${color})`;
+      }
+      const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      await this.highlighter.element(target, color);
+      this.#highlights.push({ url, element: { role: target.record.role, name: target.record.name }, color });
+      return `\u044D\u043B\u0435\u043C\u0435\u043D\u0442 [${args.ref}] ${target.record.role} "${target.record.name}" \u043E\u0431\u0432\u0435\u0434\u0451\u043D (\u0446\u0432\u0435\u0442 ${color})`;
+    });
+  }
+  clearHighlights() {
+    return this.run(async () => {
+      await this.highlighter.clear();
+      const url = this.session.frames.main().url;
+      for (let i = this.#highlights.length - 1; i >= 0; i--) if (this.#highlights[i].url === url) this.#highlights.splice(i, 1);
+      return "\u043F\u043E\u0434\u0441\u0432\u0435\u0442\u043A\u0430 \u0441\u043D\u044F\u0442\u0430";
+    });
+  }
+  async #restoreHighlights() {
+    const url = this.session.frames.main().url;
+    const mine = this.#highlights.filter((h) => h.url === url);
+    if (!mine.length) return;
+    try {
+      for (const h of mine.filter((h2) => h2.text)) await this.highlighter.text(h.text, h.color);
+      const wanted = mine.filter((h) => h.element);
+      if (!wanted.length) return;
+      const { roots } = await this.observer.quick();
+      for (const h of wanted) {
+        const node = flat(roots).find((n) => n.role === h.element.role && n.name === h.element.name && n.backendNodeId !== void 0);
+        if (!node) continue;
+        const target = await resolveTarget(this.session, this.refs, this.refs.assign(node), this.observer.probes);
+        await this.highlighter.element(target, h.color);
+      }
+    } catch {
+    }
   }
   handleDialog(args) {
     return this.run(async () => {
