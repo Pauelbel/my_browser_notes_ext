@@ -800,9 +800,9 @@ async function waitForReady(session, network, probes, capMs = 5e3) {
     const waited = Date.now() - started;
     const domQuiet = Date.now() - mutationsStableSince >= DOM_QUIET_MS;
     const needQuiet = Date.now() - network.createdAt < FRESH_TRACKER_MS ? FRESH_QUIET_MS : NETWORK_QUIET_MS;
-    if (readyState === "complete" && network.quietFor() >= needQuiet && domQuiet) return { ready: true, waitedMs: waited };
+    if (readyState !== "loading" && network.quietFor() >= needQuiet && domQuiet) return { ready: true, waitedMs: waited };
     if (waited >= capMs) {
-      const reason = readyState !== "complete" ? "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0435\u0449\u0451 \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F" : network.inflight() ? `\u0438\u0434\u0443\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${network.inflight()})` : "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0435\u0442 \u043C\u0435\u043D\u044F\u0442\u044C\u0441\u044F";
+      const reason = readyState === "loading" ? "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0435\u0449\u0451 \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F" : network.inflight() ? `\u0438\u0434\u0443\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${network.inflight()})` : "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0435\u0442 \u043C\u0435\u043D\u044F\u0442\u044C\u0441\u044F";
       return { ready: false, waitedMs: waited, reason };
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));

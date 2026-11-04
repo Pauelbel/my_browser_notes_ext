@@ -1,4 +1,5 @@
-// When a page has settled enough to describe: the document loaded, no requests in flight for 500 ms
+// When a page has settled enough to describe: the document parsed (some pages never reach `complete` because a
+// resource keeps loading), no requests in flight for 500 ms
 // (long-lived streams do not count), and no DOM mutations for 300 ms. Never longer than the cap.
 import type {PageSession} from './session.ts';
 import {probeEval} from './probe.ts';
@@ -65,9 +66,9 @@ export async function waitForReady(session: PageSession, network: NetworkTracker
     const waited = Date.now() - started;
     const domQuiet = Date.now() - mutationsStableSince >= DOM_QUIET_MS;
     const needQuiet = Date.now() - network.createdAt < FRESH_TRACKER_MS ? FRESH_QUIET_MS : NETWORK_QUIET_MS;
-    if (readyState === 'complete' && network.quietFor() >= needQuiet && domQuiet) return {ready: true, waitedMs: waited};
+    if (readyState !== 'loading' && network.quietFor() >= needQuiet && domQuiet) return {ready: true, waitedMs: waited};
     if (waited >= capMs) {
-      const reason = readyState !== 'complete' ? 'страница ещё загружается' : network.inflight() ? `идут запросы (${network.inflight()})` : 'страница продолжает меняться';
+      const reason = readyState === 'loading' ? 'страница ещё загружается' : network.inflight() ? `идут запросы (${network.inflight()})` : 'страница продолжает меняться';
       return {ready: false, waitedMs: waited, reason};
     }
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
