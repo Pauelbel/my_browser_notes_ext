@@ -1,3 +1,6 @@
+// src/store/title.ts
+var TITLE_LENGTH = 60;
+
 // src/agent/profiles.ts
 var TOOL_CATALOGUE = [
   { name: "snapshot", label: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", group: "read" },
@@ -82,8 +85,27 @@ async function write(stores, fn, conversationId) {
   announce(conversationId);
   return result;
 }
+async function listConversations() {
+  const all = await done(database().transaction("conversations").objectStore("conversations").getAll());
+  return all.sort((a3, b) => b.updatedAt - a3.updatedAt);
+}
 function getConversation(id) {
   return done(database().transaction("conversations").objectStore("conversations").get(id));
+}
+function updateConversation(tx, id, change) {
+  const store = tx.objectStore("conversations");
+  return done(store.get(id)).then((found) => {
+    if (!found) return false;
+    change(found);
+    store.put(found);
+    return true;
+  });
+}
+async function renameConversation(id, title) {
+  await write(["conversations"], (tx) => updateConversation(tx, id, (c2) => {
+    c2.title = title;
+    c2.titleByUser = true;
+  }), id);
 }
 async function listMessages(conversationId) {
   const index = database().transaction("messages").objectStore("messages").index("conversationId");
@@ -3937,6 +3959,156 @@ function initChat(client2) {
   };
 }
 
+// src/ui/history-filter.ts
+var fold = (text2) => text2.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
+function filterConversations(list, query) {
+  const q2 = fold(query.trim());
+  return list.filter((c2) => !q2 || fold(c2.title).includes(q2)).sort((a3, b) => b.updatedAt - a3.updatedAt);
+}
+
+// src/ui/dialogs.ts
+var $3 = (id) => document.getElementById(id);
+function confirmDialog(text2, ok = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430") {
+  const dialog = $3("confirmDialog");
+  $3("confirmText").textContent = text2;
+  $3("confirmOk").textContent = ok;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.onclose = () => {
+      $3("confirmOk").textContent = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430";
+      resolve(dialog.returnValue === "ok");
+    };
+  });
+}
+function promptDialog(label, value = "", maxLength = 70) {
+  const dialog = $3("promptDialog");
+  const input = $3("promptInput");
+  $3("promptTitle").textContent = label;
+  input.value = value;
+  input.maxLength = maxLength;
+  dialog.returnValue = "";
+  dialog.showModal();
+  input.select();
+  return new Promise((resolve) => {
+    dialog.onclose = () => {
+      input.maxLength = 70;
+      resolve(dialog.returnValue === "ok" ? input.value.trim() || null : null);
+    };
+  });
+}
+
+// src/ui/history.ts
+var $4 = (id) => document.getElementById(id);
+var clock = new Intl.DateTimeFormat("ru", { hour: "2-digit", minute: "2-digit" });
+var day = new Intl.DateTimeFormat("ru", { day: "2-digit", month: "2-digit" });
+var when = (time) => new Date(time).toDateString() === (/* @__PURE__ */ new Date()).toDateString() ? clock.format(time) : day.format(time);
+var zoom = () => parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+function initHistory(chat2, client2) {
+  const button = $4("openHistory");
+  const popover = $4("historyMenu");
+  const search = $4("historySearch");
+  const list = $4("historyList");
+  const itemMenu = $4("historyItemMenu");
+  let conversations = [];
+  let menuTarget = null;
+  function place(element, rect, alignRight = false) {
+    element.hidden = false;
+    const z2 = zoom(), width = element.offsetWidth * z2, height = element.offsetHeight * z2;
+    let x2 = alignRight ? rect.right - width : rect.left;
+    x2 = Math.max(4, Math.min(x2, innerWidth - width - 4));
+    let y = rect.bottom + 4;
+    if (y + height > innerHeight - 4) y = Math.max(4, rect.top - 4 - height);
+    element.style.left = `${x2 / z2}px`;
+    element.style.top = `${y / z2}px`;
+  }
+  function render() {
+    const shown = filterConversations(conversations, search.value);
+    if (!shown.length) {
+      const empty = document.createElement("div");
+      empty.className = "h-empty";
+      empty.textContent = conversations.length ? "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E" : "\u0427\u0430\u0442\u043E\u0432 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442";
+      list.replaceChildren(empty);
+      return;
+    }
+    list.replaceChildren(...shown.map((c2) => {
+      const row = document.createElement("div");
+      row.className = "h-row";
+      row.classList.toggle("active", c2.id === chat2.current());
+      const open = document.createElement("button");
+      open.className = "h-open";
+      open.innerHTML = '<span class="h-dot"></span><span class="h-title"></span><span class="h-time"></span>';
+      open.querySelector(".h-dot").classList.toggle("on", chat2.running().has(c2.id));
+      open.querySelector(".h-title").textContent = c2.title;
+      open.querySelector(".h-time").textContent = when(c2.updatedAt);
+      open.onclick = () => {
+        close();
+        void chat2.open(c2.id);
+      };
+      const more = document.createElement("button");
+      more.className = "t-more";
+      more.innerHTML = icons.more;
+      more.setAttribute("aria-label", "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441 \u0447\u0430\u0442\u043E\u043C");
+      more.onclick = (event) => {
+        event.stopPropagation();
+        menuTarget = c2;
+        place(itemMenu, more.getBoundingClientRect(), true);
+      };
+      row.append(open, more);
+      return row;
+    }));
+  }
+  async function refresh() {
+    conversations = await listConversations();
+    if (!popover.hidden) render();
+  }
+  function close() {
+    popover.hidden = true;
+    itemMenu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  }
+  button.addEventListener("click", async () => {
+    if (!popover.hidden) {
+      close();
+      return;
+    }
+    conversations = await listConversations();
+    search.value = "";
+    render();
+    place(popover, button.getBoundingClientRect());
+    button.setAttribute("aria-expanded", "true");
+    search.focus();
+  });
+  search.addEventListener("input", render);
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!target.closest("#historyItemMenu")) itemMenu.hidden = true;
+    if (!target.closest("#historyMenu, #historyItemMenu, #openHistory")) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  itemMenu.addEventListener("click", async (event) => {
+    const action = event.target.closest("button")?.dataset.action;
+    const target = menuTarget;
+    itemMenu.hidden = true;
+    if (!target || !action) return;
+    if (action === "rename") {
+      const title = await promptDialog("\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u0447\u0430\u0442\u0430", target.title, TITLE_LENGTH);
+      if (title) await renameConversation(target.id, title);
+    } else if (action === "delete" && await confirmDialog(`\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0447\u0430\u0442 \xAB${target.title}\xBB \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430?`)) {
+      client2.post({ type: "delete", conversationId: target.id });
+      if (target.id === chat2.current()) await chat2.open(null);
+    }
+  });
+  onAssistantChange(() => {
+    void refresh();
+  });
+  chat2.onRunningChange(() => {
+    if (!popover.hidden) render();
+  });
+}
+
 // src/ui/main.ts
 initViews();
 await openAssistantDb();
@@ -3946,3 +4118,4 @@ chat = initChat(client);
 document.getElementById("newChat").addEventListener("click", () => {
   void chat.open(null);
 });
+initHistory(chat, client);

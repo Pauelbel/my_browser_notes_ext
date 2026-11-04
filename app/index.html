@@ -86,6 +86,14 @@
   <div id="empty" hidden><p>Нет заметок.<br>Создайте первую — ＋ сверху.</p></div>
 </div>
 
+<div id="historyMenu" class="popover" role="dialog" aria-label="Недавние чаты" hidden>
+  <input id="historySearch" type="search" placeholder="найти чат…" aria-label="Поиск чатов" autocomplete="off">
+  <div id="historyList"></div>
+</div>
+<div id="historyItemMenu" class="popover menu" role="menu" hidden>
+  <button data-action="rename" role="menuitem">Переименовать</button>
+  <button data-action="delete" role="menuitem" class="danger">Удалить</button>
+</div>
 <div id="noteMenu" class="popover menu" role="menu" hidden>
   <button data-action="delete" role="menuitem" class="danger">Удалить</button>
 </div>

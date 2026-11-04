@@ -226,3 +226,21 @@ html[data-view="chat"] .notes-only, html[data-view="notes"] .chat-only { display
 .composer-row select { min-width: 0; max-width: 45%; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: 12px var(--mono); }
 #sendButton { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--accent); color: var(--on-accent); flex-shrink: 0; }
 #sendButton:disabled { opacity: .4; }
+
+/* Recent chats */
+#historyMenu { width: min(320px, calc(100vw / var(--zoom, 1) - 8px)); display: flex; flex-direction: column; gap: 4px; }
+#historySearch { padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: 12px var(--mono); outline: none; }
+#historySearch:focus { border-color: var(--accent); }
+#historyList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; }
+.h-row { display: flex; align-items: center; border-radius: 4px; }
+.h-row:hover, .h-row.active { background: var(--hover); }
+.h-row .h-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
+.h-row .h-open:hover { background: none; }
+.h-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.h-dot.on { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.h-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-row.active .h-title { color: var(--accent); }
+.h-time { color: var(--muted); font: 11px var(--mono); flex-shrink: 0; }
+.h-row .t-more { padding: 0; }
+.h-row:hover .t-more { opacity: 1; }
+.h-empty { color: var(--muted); padding: 8px; text-align: center; }
