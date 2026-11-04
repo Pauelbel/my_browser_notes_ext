@@ -9,7 +9,10 @@ chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true}).catch(console.
 
 const ports = new Set<chrome.runtime.Port>();
 const emit = (event: WorkerToPanel) => { for (const port of ports) port.postMessage(event); };
-const runner = new ChatRunner({stream: ollamaStream, settings: () => getSettings(), emit});
+const runner = new ChatRunner({
+  stream: ollamaStream, settings: () => getSettings(), emit,
+  heartbeat: () => { void chrome.runtime.getPlatformInfo(); },
+});
 
 // A worker that starts has no replies in progress: any left `streaming` belonged to a worker that was stopped.
 const ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
@@ -17,8 +20,9 @@ const ready = openAssistantDb().then(() => markInterrupted()).catch(console.erro
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== PORT_NAME) return;
   ports.add(port);
-  port.postMessage({type: 'running', conversationIds: runner.running()} satisfies WorkerToPanel);
   port.onDisconnect.addListener(() => ports.delete(port));
+  // After `ready`, so replies a stopped worker left are already marked interrupted when the panel hears nothing runs.
+  void ready.then(() => port.postMessage({type: 'running', conversationIds: runner.running()} satisfies WorkerToPanel));
   port.onMessage.addListener(async (message: PanelToWorker) => {
     await ready;
     if (message.type === 'send') runner.send(message).catch(console.error);

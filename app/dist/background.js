@@ -306,13 +306,15 @@ async function putMessage(message) {
   }, message.conversationId);
 }
 async function markInterrupted() {
-  return write(["messages"], async (tx) => {
+  const stuck = await write(["messages"], async (tx) => {
     const store = tx.objectStore("messages");
     const all = await done(store.getAll());
-    const stuck = all.filter((m) => m.status === "streaming");
-    for (const m of stuck) store.put({ ...m, status: "interrupted" });
-    return stuck.length;
+    const found = all.filter((m) => m.status === "streaming");
+    for (const m of found) store.put({ ...m, status: "interrupted" });
+    return found;
   });
+  for (const id of new Set(stuck.map((m) => m.conversationId))) announce(id);
+  return stuck.length;
 }
 async function listProfiles() {
   const all = await done(database().transaction("profiles").objectStore("profiles").getAll());
@@ -37223,6 +37225,8 @@ function describeError(error62, baseUrl) {
 var ChatRunner = class {
   #deps;
   #runs = /* @__PURE__ */ new Map();
+  #active = 0;
+  #beat = null;
   constructor(deps) {
     this.#deps = deps;
   }
@@ -37240,6 +37244,17 @@ var ChatRunner = class {
       await run.finished;
     }
     await deleteConversation(conversationId);
+    this.#deps.emit({ type: "deleted", conversationId });
+  }
+  #setActive(delta) {
+    this.#active += delta;
+    const { heartbeat } = this.#deps;
+    if (!heartbeat) return;
+    if (this.#active > 0 && !this.#beat) this.#beat = setInterval(heartbeat, this.#deps.heartbeatMs ?? 2e4);
+    if (this.#active === 0 && this.#beat) {
+      clearInterval(this.#beat);
+      this.#beat = null;
+    }
   }
   async send(command) {
     const text2 = command.text.trim();
@@ -37254,6 +37269,7 @@ var ChatRunner = class {
     }) };
     let claimed = command.conversationId;
     if (claimed) this.#runs.set(claimed, run);
+    this.#setActive(1);
     try {
       claimed = await this.#reply(command, text2, run, (id) => {
         claimed = id;
@@ -37261,6 +37277,7 @@ var ChatRunner = class {
       });
     } finally {
       if (claimed) this.#runs.delete(claimed);
+      this.#setActive(-1);
       release();
     }
   }
@@ -37278,6 +37295,7 @@ var ChatRunner = class {
       conversation = { ...conversation, profileId: profile.id };
     }
     const history = await listMessages(conversation.id);
+    if (run.deleted) return conversation.id;
     const at = now2();
     const user = { id: crypto.randomUUID(), conversationId: conversation.id, role: "user", text: text2, reasoning: "", status: "done", createdAt: at };
     const assistant = {
@@ -37340,13 +37358,20 @@ var ports = /* @__PURE__ */ new Set();
 var emit = (event) => {
   for (const port of ports) port.postMessage(event);
 };
-var runner = new ChatRunner({ stream: ollamaStream, settings: () => getSettings(), emit });
+var runner = new ChatRunner({
+  stream: ollamaStream,
+  settings: () => getSettings(),
+  emit,
+  heartbeat: () => {
+    void chrome.runtime.getPlatformInfo();
+  }
+});
 var ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PORT_NAME) return;
   ports.add(port);
-  port.postMessage({ type: "running", conversationIds: runner.running() });
   port.onDisconnect.addListener(() => ports.delete(port));
+  void ready.then(() => port.postMessage({ type: "running", conversationIds: runner.running() }));
   port.onMessage.addListener(async (message) => {
     await ready;
     if (message.type === "send") runner.send(message).catch(console.error);

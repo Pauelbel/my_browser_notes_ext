@@ -52,3 +52,15 @@ test('running ставит флаг, если текущий чат отвеча
   assert.equal(applyEvent(idle, {type: 'running', conversationIds: ['c1']}).running, true);
   assert.equal(applyEvent(idle, {type: 'running', conversationIds: ['c2']}).running, false);
 });
+
+test('running без текущего чата помечает его зависший ответ прерванным', () => {
+  const s = applyEvent(inChat, {type: 'running', conversationIds: []});
+  assert.equal(s.running, false);
+  assert.equal(s.messages[1].status, 'interrupted');
+  assert.equal(s.messages[0].status, 'done');
+});
+
+test('deleted текущего чата очищает экран', () => {
+  assert.deepEqual(applyEvent(inChat, {type: 'deleted', conversationId: 'c1'}), emptyChat);
+  assert.deepEqual(applyEvent(inChat, {type: 'deleted', conversationId: 'c2'}), inChat);
+});

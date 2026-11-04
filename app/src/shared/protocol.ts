@@ -14,4 +14,5 @@ export type WorkerToPanel =
   /** The whole text so far, not an increment: a panel that joins mid-reply catches up from any delta. */
   | {type: 'delta'; conversationId: string; messageId: string; text: string; reasoning: string}
   | {type: 'finished'; conversationId: string; message: Message}
-  | {type: 'busy'; requestId: string; conversationId: string};
+  | {type: 'busy'; requestId: string; conversationId: string}
+  | {type: 'deleted'; conversationId: string};

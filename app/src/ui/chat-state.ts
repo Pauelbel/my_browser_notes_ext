@@ -22,8 +22,17 @@ function upsert(messages: Message[], message: Message): Message[] {
 
 export function applyEvent(state: ChatState, event: WorkerToPanel): ChatState {
   switch (event.type) {
-    case 'running':
-      return {...state, running: state.conversationId !== null && event.conversationIds.includes(state.conversationId)};
+    case 'running': {
+      const running = state.conversationId !== null && event.conversationIds.includes(state.conversationId);
+      if (running) return {...state, running};
+      // The worker that sent this has no reply in progress here: a reply still streaming on screen died with the old one.
+      const messages = state.messages.some(m => m.status === 'streaming')
+        ? state.messages.map(m => m.status === 'streaming' ? {...m, status: 'interrupted' as const} : m)
+        : state.messages;
+      return {...state, running, messages};
+    }
+    case 'deleted':
+      return event.conversationId === state.conversationId ? emptyChat : state;
     case 'started': {
       const mine = event.requestId === state.pendingRequestId;
       if (!mine && event.conversation.id !== state.conversationId) return state;

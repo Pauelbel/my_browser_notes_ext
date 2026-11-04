@@ -211,8 +211,14 @@ function upsert(messages, message) {
 }
 function applyEvent(state, event) {
   switch (event.type) {
-    case "running":
-      return { ...state, running: state.conversationId !== null && event.conversationIds.includes(state.conversationId) };
+    case "running": {
+      const running = state.conversationId !== null && event.conversationIds.includes(state.conversationId);
+      if (running) return { ...state, running };
+      const messages = state.messages.some((m) => m.status === "streaming") ? state.messages.map((m) => m.status === "streaming" ? { ...m, status: "interrupted" } : m) : state.messages;
+      return { ...state, running, messages };
+    }
+    case "deleted":
+      return event.conversationId === state.conversationId ? emptyChat : state;
     case "started": {
       const mine = event.requestId === state.pendingRequestId;
       if (!mine && event.conversation.id !== state.conversationId) return state;
@@ -2742,7 +2748,7 @@ function createDOMPurify() {
       value: false
     }
   }));
-  let FORBID_TAGS = null;
+  let FORBID_TAGS2 = null;
   let FORBID_ATTR = null;
   const EXTRA_ELEMENT_HANDLING = Object.seal(create(null, {
     tagCheck: {
@@ -2890,7 +2896,7 @@ function createDOMPurify() {
       base: DEFAULT_DATA_URI_TAGS
     });
     FORBID_CONTENTS = _resolveSetOption(cfg, "FORBID_CONTENTS", DEFAULT_FORBID_CONTENTS, { transform: transformCaseFunc });
-    FORBID_TAGS = _resolveSetOption(cfg, "FORBID_TAGS", clone({}), { transform: transformCaseFunc });
+    FORBID_TAGS2 = _resolveSetOption(cfg, "FORBID_TAGS", clone({}), { transform: transformCaseFunc });
     FORBID_ATTR = _resolveSetOption(cfg, "FORBID_ATTR", clone({}), { transform: transformCaseFunc });
     USE_PROFILES = objectHasOwnProperty(cfg, "USE_PROFILES") ? cfg.USE_PROFILES && typeof cfg.USE_PROFILES === "object" ? clone(cfg.USE_PROFILES) : cfg.USE_PROFILES : false;
     ALLOW_ARIA_ATTR = cfg.ALLOW_ARIA_ATTR !== false;
@@ -2971,7 +2977,7 @@ function createDOMPurify() {
     ]);
     if (ALLOWED_TAGS.table) {
       addToSet(ALLOWED_TAGS, ["tbody"]);
-      delete FORBID_TAGS.tbody;
+      delete FORBID_TAGS2.tbody;
     }
     if (cfg.TRUSTED_TYPES_POLICY) {
       if (typeof cfg.TRUSTED_TYPES_POLICY.createHTML !== "function") throw typeErrorCreate('TRUSTED_TYPES_POLICY configuration option must provide a "createHTML" hook.');
@@ -3324,7 +3330,7 @@ function createDOMPurify() {
     return false;
   };
   const _sanitizeDisallowedNode = function _sanitizeDisallowedNode2(currentNode, tagName, root) {
-    if (!FORBID_TAGS[tagName] && _isBasicCustomElement(tagName) && _matchesNameCheck(CUSTOM_ELEMENT_HANDLING.tagNameCheck, tagName)) return false;
+    if (!FORBID_TAGS2[tagName] && _isBasicCustomElement(tagName) && _matchesNameCheck(CUSTOM_ELEMENT_HANDLING.tagNameCheck, tagName)) return false;
     if (KEEP_CONTENT && !FORBID_CONTENTS[tagName] && !FORBID_CONTENTS[stringToLowerCase(tagName)]) {
       const parentNode = getParentNode(currentNode);
       const childNodes = getChildNodes(currentNode);
@@ -3367,7 +3373,7 @@ function createDOMPurify() {
       _forceRemove(currentNode);
       return true;
     }
-    if (FORBID_TAGS[tagName] || !(EXTRA_ELEMENT_HANDLING.tagCheck instanceof Function && EXTRA_ELEMENT_HANDLING.tagCheck(tagName)) && !ALLOWED_TAGS[tagName]) {
+    if (FORBID_TAGS2[tagName] || !(EXTRA_ELEMENT_HANDLING.tagCheck instanceof Function && EXTRA_ELEMENT_HANDLING.tagCheck(tagName)) && !ALLOWED_TAGS[tagName]) {
       const removed = _sanitizeDisallowedNode(currentNode, tagName, root);
       if (removed === false) {
         _executeHooks(hooks.afterSanitizeElements, currentNode, null);
@@ -3594,7 +3600,7 @@ function createDOMPurify() {
       const nn = _readNodeName(dirty);
       if (typeof nn === "string") {
         const tagName = transformCaseFunc(nn);
-        if (!ALLOWED_TAGS[tagName] || FORBID_TAGS[tagName]) {
+        if (!ALLOWED_TAGS[tagName] || FORBID_TAGS2[tagName]) {
           _neutralizeRoot(dirty);
           throw typeErrorCreate("root node is forbidden and cannot be sanitized in-place");
         }
@@ -3703,15 +3709,27 @@ function createDOMPurify() {
 var purify_default = createDOMPurify();
 
 // src/ui/markdown.ts
-purify_default.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
+var FORBID_TAGS = ["style", "form", "input", "button", "textarea", "select", "option", "iframe", "frame", "object", "embed", "link", "meta", "base"];
+var LOCAL_SOURCE = /^(data|blob):/i;
+var purifier = null;
+function purify() {
+  if (purifier) return purifier;
+  purifier = purify_default(window);
+  purifier.addHook("uponSanitizeAttribute", (_node, data) => {
+    if (data.attrName === "src" && !LOCAL_SOURCE.test(data.attrValue.trim())) data.keepAttr = false;
+  });
+  purifier.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+    if (node.tagName === "IMG" && !node.hasAttribute("src")) node.remove();
+  });
+  return purifier;
+}
 function renderMarkdown(text2) {
   const html2 = x.parse(text2, { gfm: true, breaks: true, async: false });
-  return purify_default.sanitize(html2);
+  return purify().sanitize(html2, { FORBID_TAGS, FORBID_ATTR: ["style", "srcset"] });
 }
 
 // src/store/settings.ts
@@ -3843,6 +3861,7 @@ function initChat(client2) {
   const running = /* @__PURE__ */ new Set();
   const runningListeners = [];
   const nodes = /* @__PURE__ */ new Map();
+  const filled = /* @__PURE__ */ new Map();
   const transcript = $2("transcript");
   const input = $2("prompt");
   const send = $2("sendButton");
@@ -3882,6 +3901,7 @@ function initChat(client2) {
     for (const [id, node] of nodes) if (!keep.has(id)) {
       node.remove();
       nodes.delete(id);
+      filled.delete(id);
     }
     if (!state.messages.length) {
       transcript.replaceChildren(emptyHint());
@@ -3889,7 +3909,10 @@ function initChat(client2) {
       transcript.querySelector(".chat-empty")?.remove();
       state.messages.forEach((message, index) => {
         const node = messageNode(message);
-        fill(node, message);
+        if (filled.get(message.id) !== message) {
+          fill(node, message);
+          filled.set(message.id, message);
+        }
         if (transcript.children[index] !== node) transcript.insertBefore(node, transcript.children[index] ?? null);
       });
     }
@@ -3963,6 +3986,7 @@ function initChat(client2) {
     if (conversation && profiles.some((p) => p.id === conversation.profileId)) profileSelect.value = conversation.profileId;
     setPref(LAST, id);
     nodes.clear();
+    filled.clear();
     transcript.replaceChildren();
     render();
     transcript.scrollTop = transcript.scrollHeight;
@@ -3973,11 +3997,12 @@ function initChat(client2) {
       await loadProfiles();
       return;
     }
-    if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
+    if (conversationId !== state.conversationId) return;
     if (!await getConversation(conversationId)) {
-      await open(null);
+      if (conversationId === state.conversationId) await open(null);
       return;
     }
+    if (state.running || state.pendingRequestId) return;
     const messages = await listMessages(conversationId);
     if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
     state = { ...state, messages };
@@ -3989,12 +4014,17 @@ function initChat(client2) {
       event.conversationIds.forEach((id) => running.add(id));
     }
     if (event.type === "started") running.add(event.conversation.id);
-    if (event.type === "finished") running.delete(event.conversationId);
+    if (event.type === "finished" || event.type === "deleted") running.delete(event.conversationId);
+    if (event.type === "deleted" && event.conversationId === state.conversationId) {
+      runningListeners.forEach((l) => l());
+      void open(null);
+      return;
+    }
     const before = state.conversationId;
     state = applyEvent(state, event);
     if (state.conversationId !== before) setPref(LAST, state.conversationId);
     render();
-    if (event.type === "running" || event.type === "started" || event.type === "finished") runningListeners.forEach((l) => l());
+    if (event.type !== "delta" && event.type !== "busy") runningListeners.forEach((l) => l());
   }
   void (async () => {
     await loadProfiles();

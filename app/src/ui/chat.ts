@@ -38,6 +38,8 @@ export function initChat(client: Client): ChatView {
   const running = new Set<string>();
   const runningListeners: (() => void)[] = [];
   const nodes = new Map<string, HTMLElement>();
+  /** The message object each node was last filled from; an unchanged object is not rendered again. */
+  const filled = new Map<string, Message>();
   const transcript = $('transcript');
   const input = $<HTMLTextAreaElement>('prompt');
   const send = $<HTMLButtonElement>('sendButton');
@@ -77,14 +79,14 @@ export function initChat(client: Client): ChatView {
   function render(): void {
     const nearBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 40;
     const keep = new Set(state.messages.map(m => m.id));
-    for (const [id, node] of nodes) if (!keep.has(id)) { node.remove(); nodes.delete(id); }
+    for (const [id, node] of nodes) if (!keep.has(id)) { node.remove(); nodes.delete(id); filled.delete(id); }
     if (!state.messages.length) {
       transcript.replaceChildren(emptyHint());
     } else {
       transcript.querySelector('.chat-empty')?.remove();
       state.messages.forEach((message, index) => {
         const node = messageNode(message);
-        fill(node, message);
+        if (filled.get(message.id) !== message) { fill(node, message); filled.set(message.id, message); }
         if (transcript.children[index] !== node) transcript.insertBefore(node, transcript.children[index] ?? null);
       });
     }
@@ -160,6 +162,7 @@ export function initChat(client: Client): ChatView {
     if (conversation && profiles.some(p => p.id === conversation.profileId)) profileSelect.value = conversation.profileId;
     setPref(LAST, id);
     nodes.clear();
+    filled.clear();
     transcript.replaceChildren();
     render();
     transcript.scrollTop = transcript.scrollHeight;
@@ -168,8 +171,9 @@ export function initChat(client: Client): ChatView {
 
   onAssistantChange(async ({conversationId}) => {
     if (!conversationId) { await loadProfiles(); return; }
-    if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
-    if (!await getConversation(conversationId)) { await open(null); return; }
+    if (conversationId !== state.conversationId) return;
+    if (!await getConversation(conversationId)) { if (conversationId === state.conversationId) await open(null); return; }
+    if (state.running || state.pendingRequestId) return;
     const messages = await listMessages(conversationId);
     // Read the state again after the awaits: a worker event may have arrived meanwhile and is newer than the database.
     if (conversationId !== state.conversationId || state.running || state.pendingRequestId) return;
@@ -180,12 +184,17 @@ export function initChat(client: Client): ChatView {
   function handle(event: WorkerToPanel): void {
     if (event.type === 'running') { running.clear(); event.conversationIds.forEach(id => running.add(id)); }
     if (event.type === 'started') running.add(event.conversation.id);
-    if (event.type === 'finished') running.delete(event.conversationId);
+    if (event.type === 'finished' || event.type === 'deleted') running.delete(event.conversationId);
+    if (event.type === 'deleted' && event.conversationId === state.conversationId) {
+      runningListeners.forEach(l => l());
+      void open(null);
+      return;
+    }
     const before = state.conversationId;
     state = applyEvent(state, event);
     if (state.conversationId !== before) setPref(LAST, state.conversationId);
     render();
-    if (event.type === 'running' || event.type === 'started' || event.type === 'finished') runningListeners.forEach(l => l());
+    if (event.type !== 'delta' && event.type !== 'busy') runningListeners.forEach(l => l());
   }
 
   void (async () => {

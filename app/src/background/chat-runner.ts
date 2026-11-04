@@ -15,6 +15,12 @@ export interface ChatDeps {
   now?: () => number;
   /** How often a growing reply is written to the database; 500 ms by default. */
   saveEveryMs?: number;
+  /**
+   * Called every `heartbeatMs` while a reply is in progress. Chrome stops an idle service worker after 30 s, and
+   * reading a fetch body does not count as activity; with no panel open nothing else would keep the worker alive.
+   */
+  heartbeat?: () => void;
+  heartbeatMs?: number;
 }
 
 interface Run {
@@ -29,6 +35,8 @@ type SendCommand = Extract<PanelToWorker, {type: 'send'}>;
 export class ChatRunner {
   #deps: ChatDeps;
   #runs = new Map<string, Run>();
+  #active = 0;
+  #beat: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: ChatDeps) {
     this.#deps = deps;
@@ -50,6 +58,15 @@ export class ChatRunner {
       await run.finished;
     }
     await deleteConversation(conversationId);
+    this.#deps.emit({type: 'deleted', conversationId});
+  }
+
+  #setActive(delta: number): void {
+    this.#active += delta;
+    const {heartbeat} = this.#deps;
+    if (!heartbeat) return;
+    if (this.#active > 0 && !this.#beat) this.#beat = setInterval(heartbeat, this.#deps.heartbeatMs ?? 20_000);
+    if (this.#active === 0 && this.#beat) { clearInterval(this.#beat); this.#beat = null; }
   }
 
   async send(command: SendCommand): Promise<void> {
@@ -64,10 +81,12 @@ export class ChatRunner {
     const run: Run = {controller: new AbortController(), deleted: false, finished: new Promise(resolve => { release = resolve; })};
     let claimed = command.conversationId;
     if (claimed) this.#runs.set(claimed, run);
+    this.#setActive(1);
     try {
       claimed = await this.#reply(command, text, run, id => { claimed = id; this.#runs.set(id, run); });
     } finally {
       if (claimed) this.#runs.delete(claimed);
+      this.#setActive(-1);
       release();
     }
   }
@@ -87,6 +106,8 @@ export class ChatRunner {
       conversation = {...conversation, profileId: profile.id};
     }
     const history = await listMessages(conversation.id);
+    // Deleted while the awaits above ran: write nothing, so the chat is not brought back.
+    if (run.deleted) return conversation.id;
 
     const at = now();
     const user: Message = {id: crypto.randomUUID(), conversationId: conversation.id, role: 'user', text, reasoning: '', status: 'done', createdAt: at};

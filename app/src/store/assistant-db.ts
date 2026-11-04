@@ -124,13 +124,16 @@ export async function putMessage(message: Message): Promise<void> {
 
 /** Marks replies left `streaming` by a worker that stopped as `interrupted`; returns how many. */
 export async function markInterrupted(): Promise<number> {
-  return write(['messages'], async tx => {
+  const stuck = await write(['messages'], async tx => {
     const store = tx.objectStore('messages');
     const all = await done(store.getAll() as IDBRequest<Message[]>);
-    const stuck = all.filter(m => m.status === 'streaming');
-    for (const m of stuck) store.put({...m, status: 'interrupted'});
-    return stuck.length;
+    const found = all.filter(m => m.status === 'streaming');
+    for (const m of found) store.put({...m, status: 'interrupted'});
+    return found;
   });
+  // Each affected chat is announced, so a panel showing one re-reads it.
+  for (const id of new Set(stuck.map(m => m.conversationId))) announce(id);
+  return stuck.length;
 }
 
 // ——— Profiles ———

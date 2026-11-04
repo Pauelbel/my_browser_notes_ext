@@ -214,3 +214,45 @@ async function waitFor(condition: () => boolean | Promise<boolean>, ms = 2000): 
     await new Promise(resolve => setTimeout(resolve, 5));
   }
 }
+
+test('пока идёт ответ, worker получает сердцебиение, после — нет', async () => {
+  const g = gate();
+  let beats = 0;
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({
+    stream: fakeModel([{type: 'text', delta: 'а'}, {gate: g.promise}]).stream,
+    settings: async () => SETTINGS, emit: e => events.push(e), heartbeat: () => { beats++; }, heartbeatMs: 10,
+  });
+  const done = chat.send(send('привет'));
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.ok(beats >= 2, `сердцебиений: ${beats}`);
+  g.open(); await done;
+  const after = beats;
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(beats, after);
+});
+
+test('delete сообщает панелям deleted', async () => {
+  const {chat, events} = runner(fakeModel([{type: 'text', delta: 'x'}]));
+  await chat.send(send('привет'));
+  const id = (events[0] as Extract<WorkerToPanel, {type: 'started'}>).conversation.id;
+  await chat.delete(id);
+  assert.deepEqual(events.at(-1), {type: 'deleted', conversationId: id});
+});
+
+test('delete до начала ответа не даёт started и не пишет сообщений', async () => {
+  const conversation = await db.createConversation({profileId: 'assistant', firstMessage: 'было'});
+  const g = gate();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({
+    stream: fakeModel([{type: 'text', delta: 'x'}]).stream,
+    settings: async () => { await g.promise; return SETTINGS; }, emit: e => events.push(e),
+  });
+  const done = chat.send(send('ещё', {conversationId: conversation.id}));
+  const deleting = chat.delete(conversation.id);
+  g.open(); await done; await deleting;
+  assert.deepEqual(events.map(e => e.type), ['deleted']);
+  assert.equal(await db.getConversation(conversation.id), undefined);
+  assert.deepEqual(await db.listMessages(conversation.id), []);
+  assert.deepEqual(chat.running(), []);
+});

@@ -79,3 +79,14 @@ test('validateProfile', () => {
   assert.equal(typeof validateProfile({name: 'Ок', prompt: 'п'.repeat(4001)}), 'string');
   assert.equal(validateProfile({name: 'Помощник', prompt: 'Роль'}), null);
 });
+
+test('markInterrupted сообщает о каждом затронутом чате', async () => {
+  const c = await db.createConversation({profileId: 'assistant', firstMessage: 'a'});
+  await db.putMessage(message(c.id, {status: 'streaming', role: 'assistant'}));
+  const seen: (string | undefined)[] = [];
+  const stop = db.onAssistantChange(e => seen.push(e.conversationId));
+  await db.markInterrupted();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  stop();
+  assert.ok(seen.includes(c.id), `получено: ${JSON.stringify(seen)}`);
+});
