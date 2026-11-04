@@ -14,12 +14,20 @@ export interface Profile {
   createdAt: number;
 }
 
+export type ChatMode = 'chat' | 'agent';
+export type PermissionMode = 'ask' | 'auto';
+export type SiteRule = 'allow' | 'ask' | 'block';
+
 export interface Conversation {
   id: string;
   title: string;
   /** The user renamed it; the title no longer follows the first message. */
   titleByUser: boolean;
   profileId: string;
+  /** chat: answers and reads; agent: acts on pages. */
+  mode: ChatMode;
+  /** In agent mode: ask before dangerous actions, or act on its own (site rules still apply). */
+  permission: PermissionMode;
   createdAt: number;
   updatedAt: number;
 }
@@ -54,4 +62,7 @@ export interface Message {
 export interface Settings {
   ollamaUrl: string;
   model: string;
+  siteRules: Record<string, SiteRule>;
+  /** Draw a frame around the page the agent works on. */
+  border: boolean;
 }

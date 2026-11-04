@@ -1,9 +1,9 @@
 // Settings live under one key in chrome.storage.local, so the worker and every panel read the same values.
-import type {Settings} from './types.ts';
+import type {Settings, SiteRule} from './types.ts';
 
 export type KeyValueArea = Pick<chrome.storage.StorageArea, 'get' | 'set'>;
 
-export const DEFAULT_SETTINGS: Settings = {ollamaUrl: 'http://localhost:11434', model: ''};
+export const DEFAULT_SETTINGS: Settings = {ollamaUrl: 'http://localhost:11434', model: '', siteRules: {}, border: true};
 const KEY = 'settings';
 
 /** Accepts what people type: no scheme, trailing slashes, the /v1 suffix of the OpenAI-compatible address. */
@@ -19,7 +19,7 @@ const defaultArea = (): KeyValueArea => chrome.storage.local;
 
 export async function getSettings(area: KeyValueArea = defaultArea()): Promise<Settings> {
   const stored = (await area.get(KEY))[KEY] as Partial<Settings> | undefined;
-  return {...DEFAULT_SETTINGS, ...stored};
+  return {...DEFAULT_SETTINGS, ...stored, siteRules: {...stored?.siteRules}};
 }
 
 export async function saveSettings(patch: Partial<Settings>, area: KeyValueArea = defaultArea()): Promise<Settings> {
@@ -27,4 +27,12 @@ export async function saveSettings(patch: Partial<Settings>, area: KeyValueArea 
   next.ollamaUrl = normalizeOllamaUrl(next.ollamaUrl);
   await area.set({[KEY]: next});
   return next;
+}
+
+/** Sets or (with null) removes the rule for a site. Only the user changes rules: no agent call reaches this. */
+export async function setSiteRule(site: string, rule: SiteRule | null, area: KeyValueArea = defaultArea()): Promise<Settings> {
+  const current = await getSettings(area);
+  const siteRules = {...current.siteRules};
+  if (rule) siteRules[site] = rule; else delete siteRules[site];
+  return saveSettings({siteRules}, area);
 }

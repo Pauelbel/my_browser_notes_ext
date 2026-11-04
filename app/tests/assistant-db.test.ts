@@ -90,3 +90,15 @@ test('markInterrupted сообщает о каждом затронутом ча
   stop();
   assert.ok(seen.includes(c.id), `получено: ${JSON.stringify(seen)}`);
 });
+
+test('режим чата: старые записи — chat/ask, setConversationMode сохраняет', async () => {
+  const c = await db.createConversation({profileId: 'assistant', firstMessage: 'a'});
+  assert.equal(c.mode, 'chat');
+  assert.equal(c.permission, 'ask');
+  const agent = await db.createConversation({profileId: 'assistant', firstMessage: 'b', mode: 'agent', permission: 'auto'});
+  assert.equal((await db.getConversation(agent.id))?.mode, 'agent');
+  await db.setConversationMode(c.id, 'agent', 'auto');
+  const updated = await db.getConversation(c.id);
+  assert.equal(updated?.mode, 'agent');
+  assert.equal(updated?.permission, 'auto');
+});

@@ -1,6 +1,6 @@
 // How much the agent may do on its own: the chat's mode and the user's per-site rules (as nanobrowser has them).
-export type PermissionMode = 'ask' | 'auto';
-export type SiteRule = 'allow' | 'ask' | 'block';
+import type {PermissionMode, SiteRule} from '../store/types.ts';
+export type {PermissionMode, SiteRule};
 
 export {siteOf} from '../page/index.ts';
 

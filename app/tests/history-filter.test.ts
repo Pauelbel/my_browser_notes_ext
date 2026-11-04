@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {filterConversations} from '../src/ui/history-filter.ts';
 import type {Conversation} from '../src/store/types.ts';
 
-const c = (id: string, title: string, updatedAt: number): Conversation => ({id, title, titleByUser: false, profileId: 'assistant', createdAt: 0, updatedAt});
+const c = (id: string, title: string, updatedAt: number): Conversation => ({id, title, titleByUser: false, profileId: 'assistant', mode: 'chat', permission: 'ask', createdAt: 0, updatedAt});
 const list = [c('1', 'план', 30), c('2', 'Ёлка', 10), c('3', 'Отчёт QA', 20)];
 
 test('filterConversations: регистр и ё не важны, порядок по updatedAt', () => {

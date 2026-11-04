@@ -11,7 +11,7 @@ import type {WorkerToPanel} from '../src/shared/protocol.ts';
 import type {StreamPart, StreamReply} from '../src/llm/stream.ts';
 import type {Message, Settings} from '../src/store/types.ts';
 
-const SETTINGS: Settings = {ollamaUrl: 'http://localhost:11434', model: 'm'};
+const SETTINGS: Settings = {ollamaUrl: 'http://localhost:11434', model: 'm', siteRules: {}, border: true};
 
 beforeEach(async () => { await db.openAssistantDb(`test-${crypto.randomUUID()}`); });
 afterEach(() => { db.closeAssistantDb(); });

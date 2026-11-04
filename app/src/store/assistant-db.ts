@@ -1,7 +1,7 @@
 // IndexedDB storage of the assistant: conversations, messages and profiles, in the `assistant` database.
 // It is separate from the notes database, which stays as version 1.0 left it.
 // Every write is announced on a BroadcastChannel so the worker, the side panel and a tab stay in step.
-import type {Conversation, Message, Profile} from './types.ts';
+import type {ChatMode, Conversation, Message, PermissionMode, Profile} from './types.ts';
 import {titleFrom} from './title.ts';
 import {DEFAULT_PROFILES} from '../agent/profiles.ts';
 
@@ -58,20 +58,24 @@ async function write<T>(stores: string[], fn: (tx: IDBTransaction) => T | Promis
 
 // ——— Conversations ———
 
+/** Conversations saved before modes existed read as Chat mode with Ask. */
+const withDefaults = (c: Conversation): Conversation => ({...c, mode: c.mode ?? 'chat', permission: c.permission ?? 'ask'});
+
 export async function listConversations(): Promise<Conversation[]> {
   const all = await done(database().transaction('conversations').objectStore('conversations').getAll() as IDBRequest<Conversation[]>);
-  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+  return all.map(withDefaults).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function getConversation(id: string): Promise<Conversation | undefined> {
-  return done(database().transaction('conversations').objectStore('conversations').get(id) as IDBRequest<Conversation | undefined>);
+export async function getConversation(id: string): Promise<Conversation | undefined> {
+  const found = await done(database().transaction('conversations').objectStore('conversations').get(id) as IDBRequest<Conversation | undefined>);
+  return found && withDefaults(found);
 }
 
-export function createConversation(init: {profileId: string; firstMessage: string}): Promise<Conversation> {
+export function createConversation(init: {profileId: string; firstMessage: string; mode?: ChatMode; permission?: PermissionMode}): Promise<Conversation> {
   const now = Date.now();
   const conversation: Conversation = {
     id: crypto.randomUUID(), title: titleFrom(init.firstMessage), titleByUser: false,
-    profileId: init.profileId, createdAt: now, updatedAt: now,
+    profileId: init.profileId, mode: init.mode ?? 'chat', permission: init.permission ?? 'ask', createdAt: now, updatedAt: now,
   };
   return write(['conversations'], tx => { tx.objectStore('conversations').put(conversation); return conversation; }, conversation.id);
 }
@@ -93,6 +97,10 @@ export async function renameConversation(id: string, title: string): Promise<voi
 
 export async function setConversationProfile(id: string, profileId: string): Promise<void> {
   await write(['conversations'], tx => updateConversation(tx, id, c => { c.profileId = profileId; }), id);
+}
+
+export async function setConversationMode(id: string, mode: ChatMode, permission: PermissionMode): Promise<void> {
+  await write(['conversations'], tx => updateConversation(tx, id, c => { c.mode = mode; c.permission = permission; }), id);
 }
 
 export async function deleteConversation(id: string): Promise<void> {

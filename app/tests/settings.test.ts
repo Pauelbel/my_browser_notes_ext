@@ -20,6 +20,16 @@ test('getSettings без сохранённого даёт значения по
   const area = fakeArea();
   assert.deepEqual(await getSettings(area), DEFAULT_SETTINGS);
   const saved = await saveSettings({ollamaUrl: '127.0.0.1:1/'}, area);
-  assert.deepEqual(saved, {ollamaUrl: 'http://127.0.0.1:1', model: ''});
+  assert.deepEqual(saved, {...DEFAULT_SETTINGS, ollamaUrl: 'http://127.0.0.1:1'});
   assert.deepEqual(await getSettings(area), saved);
+});
+
+test('правила сайтов и рамка: значения по умолчанию, добавление и удаление правила', async () => {
+  const {setSiteRule} = await import('../src/store/settings.ts');
+  const area = fakeArea();
+  const initial = await getSettings(area);
+  assert.deepEqual(initial.siteRules, {});
+  assert.equal(initial.border, true);
+  assert.deepEqual((await setSiteRule('example.com', 'allow', area)).siteRules, {'example.com': 'allow'});
+  assert.deepEqual((await setSiteRule('example.com', null, area)).siteRules, {});
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {applyEvent, emptyChat, type ChatState} from '../src/ui/chat-state.ts';
 import type {Conversation, Message} from '../src/store/types.ts';
 
-const conversation: Conversation = {id: 'c1', title: 't', titleByUser: false, profileId: 'assistant', createdAt: 1, updatedAt: 1};
+const conversation: Conversation = {id: 'c1', title: 't', titleByUser: false, profileId: 'assistant', mode: 'chat', permission: 'ask', createdAt: 1, updatedAt: 1};
 const user: Message = {id: 'u', conversationId: 'c1', role: 'user', text: 'привет', reasoning: '', status: 'done', createdAt: 1};
 const assistant: Message = {...user, id: 'a', role: 'assistant', text: '', status: 'streaming', createdAt: 2};
 const started = (requestId: string, c = conversation) => ({type: 'started' as const, requestId, conversation: c, user: {...user, conversationId: c.id}, assistant: {...assistant, conversationId: c.id}});
