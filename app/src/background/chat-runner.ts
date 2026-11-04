@@ -1,13 +1,21 @@
 // Runs chat replies in the service worker: one reply at a time per conversation, streamed to every panel and saved
 // as it grows, so closing the panel does not lose it and a worker that stops leaves a reply marked as interrupted.
-import type {PanelToWorker, WorkerToPanel} from '../shared/protocol.ts';
+import type {PanelAnswer, PanelToWorker, PendingPrompt, WorkerToPanel} from '../shared/protocol.ts';
 import type {StreamReply} from '../llm/stream.ts';
-import type {Message, Settings, ToolName, ToolStep} from '../store/types.ts';
-import {createConversation, deleteConversation, getConversation, listMessages, listProfiles, putMessage, setConversationProfile} from '../store/assistant-db.ts';
-import {systemPrompt} from '../agent/prompt.ts';
+import type {ChatMode, Message, PermissionMode, Settings, SiteRule, ToolName, ToolStep} from '../store/types.ts';
+import {createConversation, deleteConversation, getConversation, listMessages, listProfiles, putMessage, setConversationMode, setConversationProfile} from '../store/assistant-db.ts';
+import {agentSystemPrompt, systemPrompt} from '../agent/prompt.ts';
 import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
 import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
+import {elideOldPages} from '../agent/elision.ts';
+import type {NotesApi} from '../agent/notes.ts';
+import type {Gate, PageTools} from '../page/index.ts';
+import {PromptBroker} from './prompts.ts';
+import {createAgentSession} from './agent-session.ts';
+
+/** Model turns in one Agent-mode reply (nanobrowser's turn cap). */
+export const AGENT_MAX_STEPS = 100;
 
 /** Model turns in one Chat-mode reply, tool calls included. */
 export const CHAT_MAX_STEPS = 5;
@@ -29,6 +37,12 @@ export interface ChatDeps {
   heartbeatMs?: number;
   /** Opens the page tools for a tab; without it the model gets no page tools. */
   page?: (tabId: number) => Promise<PageHandle>;
+  /** Agent mode: opens a tab's page tools with the gate of this reply. Without it there is no Agent mode. */
+  openTab?: (tabId: number, gate: Gate) => Promise<{tools: PageTools; release(): Promise<void>}>;
+  tabsApi?: typeof chrome.tabs;
+  tabGroupsApi?: typeof chrome.tabGroups;
+  notes?: NotesApi;
+  setSiteRule?: (site: string, rule: SiteRule) => Promise<unknown>;
 }
 
 interface Run {
@@ -45,9 +59,24 @@ export class ChatRunner {
   #runs = new Map<string, Run>();
   #active = 0;
   #beat: ReturnType<typeof setInterval> | null = null;
+  readonly #broker: PromptBroker;
 
   constructor(deps: ChatDeps) {
     this.#deps = deps;
+    this.#broker = new PromptBroker(deps.emit);
+  }
+
+  /** Questions to the user that wait for an answer, for a panel that connects later. */
+  pending(): PendingPrompt[] {
+    return this.#broker.pending();
+  }
+
+  answer(promptId: string, answer: PanelAnswer): void {
+    this.#broker.answer(promptId, answer);
+  }
+
+  async setMode(conversationId: string, mode: ChatMode, permission: PermissionMode): Promise<void> {
+    await setConversationMode(conversationId, mode, permission);
   }
 
   running(): string[] {
@@ -107,7 +136,7 @@ export class ChatRunner {
 
     let conversation = command.conversationId ? await getConversation(command.conversationId) : undefined;
     if (!conversation) {
-      conversation = await createConversation({profileId: profile.id, firstMessage: text});
+      conversation = await createConversation({profileId: profile.id, firstMessage: text, mode: command.mode, permission: command.permission});
       claim(conversation.id);
     } else if (conversation.profileId !== profile.id) {
       await setConversationProfile(conversation.id, profile.id);
@@ -144,15 +173,31 @@ export class ChatRunner {
       handle ??= this.#deps.page(tabId);
       return handle.then(h => h.tools, error => unavailable(error instanceof Error ? error.message : String(error)));
     };
-    const tools = this.#deps.page ? buildChatTools(profile, openPage) : {};
+    // Agent mode needs a tab and the agent dependencies; otherwise the reply is a Chat-mode one.
+    const agentMode = conversation.mode === 'agent' && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== undefined;
+    const conversationId = conversation.id;
+    const agent = agentMode ? createAgentSession({
+      tabId: command.tabId!, profile, conversation, settings, openTab: this.#deps.openTab!, tabsApi: this.#deps.tabsApi!, tabGroupsApi: this.#deps.tabGroupsApi,
+      notes: this.#deps.notes, setSiteRule: this.#deps.setSiteRule ?? (async () => {}),
+      ask: prompt => this.#broker.ask({...prompt, conversationId}, run.controller.signal),
+    }) : null;
+    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes) : {};
     const toolNames = Object.keys(tools) as ToolName[];
+    let steps = 0;
+    let doneSummary: string | null = null;
     const emitStep = (step: ToolStep) => this.#deps.emit({type: 'step', conversationId: reply.conversationId, messageId: reply.id, step});
     try {
       const parts = this.#deps.stream({
-        settings, system: systemPrompt(profile, toolNames), messages: toModelMessages([...history, user]), signal: run.controller.signal,
-        tools, maxSteps: CHAT_MAX_STEPS,
+        settings, system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
+        messages: toModelMessages([...history, user]), signal: run.controller.signal, tools,
+        ...(agent ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: elideOldPages} : {maxSteps: CHAT_MAX_STEPS}),
       });
       for await (const part of parts) {
+        if (part.type === 'step') { steps++; continue; }
+        if (part.type === 'tool-call' && part.name === 'done') {
+          const input = part.input as {summary?: string};
+          doneSummary = input?.summary ?? '';
+        }
         if (part.type === 'tool-call') {
           const step: ToolStep = {id: part.id, name: part.name as ToolName, input: describeInput(part.input), status: 'running', summary: ''};
           reply.steps!.push(step);
@@ -175,11 +220,19 @@ export class ChatRunner {
         }
       }
       reply.status = run.controller.signal.aborted ? 'stopped' : 'done';
+      if (agent && reply.status === 'done') {
+        // The agent's answer is its text, or the summary it gave to done; a run cut by the cap says so.
+        if (!reply.text.trim() && doneSummary) reply.text = doneSummary;
+        if (doneSummary === null && steps >= AGENT_MAX_STEPS) {
+          reply.text = `${reply.text.trim() ? `${reply.text.trim()}\n\n` : ''}Достигнут лимит шагов (${AGENT_MAX_STEPS}): задача выполнена не полностью.`;
+        }
+      }
     } catch (error) {
       if (run.controller.signal.aborted) reply.status = 'stopped';
       else { reply.status = 'failed'; reply.error = describeError(error, settings.ollamaUrl); }
     } finally {
       if (handle) await (handle as Promise<PageHandle>).then(h => h.release(), () => {});
+      if (agent) await agent.release().catch(() => {});
     }
     if (!reply.steps!.length) delete reply.steps;
     await this.#finish(run, reply);

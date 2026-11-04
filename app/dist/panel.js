@@ -250,6 +250,9 @@ function applyEvent(state, event) {
       else steps[index] = event.step;
       return { ...state, messages: upsert(state.messages, { ...message, steps }) };
     }
+    case "prompt":
+    case "prompt-closed":
+      return state;
     case "busy":
       return event.requestId === state.pendingRequestId ? { ...state, pendingRequestId: null } : state;
   }

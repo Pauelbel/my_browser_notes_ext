@@ -334,3 +334,136 @@ test('без tabId инструменты не открывают страниц
   const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
   assert.equal(finished.message.steps?.[0].status, 'error');
 });
+
+// ——— Agent mode ———
+
+/** A tabs API stand-in for AgentTabs. */
+const fakeTabsApi = () => ({
+  get: async (id: number) => ({id, title: `вкладка ${id}`, url: 'http://x/'}), create: async () => ({id: 99}), update: async () => ({}),
+  remove: async () => {}, group: async () => 1, onCreated: {addListener() {}, removeListener() {}},
+}) as unknown as typeof chrome.tabs;
+
+/** Page tools whose click asks the gate as a dangerous click would, then reports what happened. */
+function fakeAgentPage() {
+  const log: string[] = [];
+  const openTab = async (_tabId: number, gate: any) => {
+    const tools = {
+      snapshot: async () => ({ok: true, text: '<<<page-content>>>\n[a1] button "Удалить"\n<<<end-page-content>>>'}),
+      click: async ({ref}: {ref: string}) => {
+        const answer = await gate.check({action: 'click', ref, role: 'button', name: 'Удалить', category: 'delete', site: 'example.com', url: 'https://example.com/'});
+        log.push(`click ${answer.decision}`);
+        return answer.decision === 'allow' ? {ok: true, text: 'click: событие отправлено'} : {ok: false, text: 'ошибка USER_DECLINED: отказано'};
+      },
+      border: async () => {},
+    };
+    return {tools: tools as any, release: async () => { log.push('release'); }};
+  };
+  return {openTab, log};
+}
+
+/** A model that calls the given tools in order, then `done` (unless told not to). */
+function agentModel(calls: {name: string; input: object}[], opts: {done?: boolean; loopForever?: boolean} = {}) {
+  const requests: Parameters<StreamReply>[0][] = [];
+  const stream: StreamReply = async function* (request) {
+    requests.push(request);
+    const run = async function* (name: string, input: object, id: string) {
+      yield {type: 'tool-call' as const, id, name, input};
+      const output = await (request.tools![name] as any).execute(input, {toolCallId: id, messages: []});
+      yield {type: 'tool-result' as const, id, ok: !String(output).startsWith('ошибка'), summary: String(output).split('\n')[0]};
+      yield {type: 'step' as const};
+    };
+    if (opts.loopForever) {
+      for (let i = 0; i < request.maxSteps!; i++) yield* run('snapshot', {}, `s${i}`);
+      return;
+    }
+    let i = 0;
+    for (const c of calls) yield* run(c.name, c.input, `c${i++}`);
+    if (opts.done !== false) yield* run('done', {outcome: 'success', summary: 'Готово: черновик удалён'}, 'd');
+  };
+  return {stream, requests};
+}
+
+function agentRunner(model: ReturnType<typeof agentModel>, page = fakeAgentPage(), extra: Partial<ConstructorParameters<typeof ChatRunner>[0]> = {}, settings: Settings = SETTINGS) {
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream: model.stream, settings: async () => settings, emit: e => events.push(e),
+    openTab: page.openTab, tabsApi: fakeTabsApi(), setSiteRule: async () => settings, ...extra});
+  return {chat, events, page};
+}
+
+const agentSend = (text: string, permission: 'ask' | 'auto' = 'auto') => ({...send(text), tabId: 7, mode: 'agent' as const, permission});
+
+test('агент вызывает click и done', async () => {
+  const model = agentModel([{name: 'click', input: {ref: 'a1'}}]);
+  const {chat, events, page} = agentRunner(model);
+  await chat.send(agentSend('удали черновик'));
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.equal(finished.message.text, 'Готово: черновик удалён');
+  assert.deepEqual(finished.message.steps?.map(s => s.name), ['click', 'done']);
+  assert.equal(model.requests[0].maxSteps, 100);
+  assert.equal(model.requests[0].stopOnTool, 'done');
+  assert.ok(model.requests[0].tools!.click && model.requests[0].tools!.tabs);
+  assert.deepEqual(page.log, ['click allow', 'release']);
+});
+
+test('лимит шагов', async () => {
+  const model = agentModel([], {loopForever: true});
+  const {chat, events} = agentRunner(model);
+  await chat.send(agentSend('бесконечная задача'));
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.match(finished.message.text, /Достигнут лимит шагов \(100\)/);
+});
+
+test('стоп во время вопроса', async () => {
+  const model = agentModel([{name: 'click', input: {ref: 'a1'}}], {done: false});
+  const {chat, events, page} = agentRunner(model);
+  const done = chat.send(agentSend('удали черновик', 'ask'));
+  await waitFor(() => events.some(e => e.type === 'prompt'));
+  const prompt = (events.find(e => e.type === 'prompt') as Extract<WorkerToPanel, {type: 'prompt'}>).prompt;
+  assert.equal(prompt.kind, 'confirm');
+  assert.match(prompt.text, /удаление/);
+  chat.stop(prompt.conversationId);
+  await done;
+  assert.ok(events.some(e => e.type === 'prompt-closed' && e.promptId === prompt.id));
+  assert.deepEqual(page.log, ['click cancel', 'release']);
+  assert.equal((events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.status, 'stopped');
+});
+
+test('вопрос повторяется новой панели, ответ доходит', async () => {
+  const model = agentModel([{name: 'click', input: {ref: 'a1'}}]);
+  const {chat, events, page} = agentRunner(model);
+  const done = chat.send(agentSend('удали черновик', 'ask'));
+  await waitFor(() => chat.pending().length === 1);
+  const [prompt] = chat.pending();
+  chat.answer(prompt.id, 'allow');
+  await done;
+  assert.deepEqual(chat.pending(), []);
+  assert.deepEqual(page.log, ['click allow', 'release']);
+  assert.equal((events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.text, 'Готово: черновик удалён');
+});
+
+test('allow-site сохраняет правило', async () => {
+  const saved: [string, string | null][] = [];
+  const model = agentModel([{name: 'click', input: {ref: 'a1'}}]);
+  const {chat} = agentRunner(model, fakeAgentPage(), {setSiteRule: async (site: string, rule: any) => { saved.push([site, rule]); return SETTINGS; }});
+  const done = chat.send(agentSend('удали черновик', 'ask'));
+  await waitFor(() => chat.pending().length === 1);
+  chat.answer(chat.pending()[0].id, 'allow-site');
+  await done;
+  assert.deepEqual(saved, [['example.com', 'allow']]);
+});
+
+test('правило сайта block отклоняет без вопроса, auto разрешает без вопроса', async () => {
+  const blocked = agentRunner(agentModel([{name: 'click', input: {ref: 'a1'}}]), fakeAgentPage(), {}, {...SETTINGS, siteRules: {'example.com': 'block'}});
+  await blocked.chat.send(agentSend('удали', 'auto'));
+  assert.deepEqual(blocked.page.log, ['click deny', 'release']);
+  assert.ok(!blocked.events.some(e => e.type === 'prompt'));
+});
+
+test('в режиме chat инструментов действий нет', async () => {
+  const model = toolCallingModel();
+  const {page} = fakePage();
+  const chat = new ChatRunner({stream: model.stream, settings: async () => SETTINGS, emit: () => {}, page, openTab: fakeAgentPage().openTab, tabsApi: fakeTabsApi()});
+  await chat.send({...send('что на странице?'), tabId: 5, mode: 'chat'});
+  assert.ok(!('click' in (model.calls[0].tools ?? {})));
+  assert.equal(model.calls[0].maxSteps, 5);
+});

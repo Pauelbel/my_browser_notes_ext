@@ -61,6 +61,9 @@ export function applyEvent(state: ChatState, event: WorkerToPanel): ChatState {
       if (index === -1) steps.push(event.step); else steps[index] = event.step;
       return {...state, messages: upsert(state.messages, {...message, steps})};
     }
+    case 'prompt':
+    case 'prompt-closed':
+      return state;
     case 'busy':
       return event.requestId === state.pendingRequestId ? {...state, pendingRequestId: null} : state;
   }
