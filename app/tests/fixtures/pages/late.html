@@ -4,7 +4,7 @@
 <button id="later" disabled onclick="document.getElementById('status').textContent='Включённая нажата'">Станет активной</button>
 <div id="status">Статус: ждём</div>
 <script>
-setTimeout(() => { const b = document.createElement('button'); b.textContent = 'Появилась позже'; b.onclick = () => document.getElementById('status').textContent = 'Поздняя нажата'; document.getElementById('slot').append(b); }, 800);
+fetch('/slow?ms=800').then(() => { const b = document.createElement('button'); b.textContent = 'Появилась позже'; b.onclick = () => document.getElementById('status').textContent = 'Поздняя нажата'; document.getElementById('slot').append(b); });
 setTimeout(() => { document.getElementById('later').disabled = false; }, 1200);
 </script>
 </body></html>

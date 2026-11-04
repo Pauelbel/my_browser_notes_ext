@@ -3,3 +3,5 @@
 export {acquire, release, type PageSession} from './session.ts';
 export {PageError, type PageErrorCode} from './errors.ts';
 export type {FrameInfo} from './frames.ts';
+export {PageTools, type ToolResult, PAGE_START, PAGE_END} from './tools.ts';
+export {pageBudget} from './render.ts';

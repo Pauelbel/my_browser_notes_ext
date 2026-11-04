@@ -21,6 +21,10 @@ export interface ONode {
   masked?: boolean;
   /** The node stands for a hidden control and points at its visible label, which is what gets clicked. */
   proxy?: 'label';
+  /** Link target, for read(). */
+  href?: string;
+  /** Heading level, for read(). */
+  level?: number;
   /** Top of the box in page coordinates (child frames offset by their iframe). */
   y?: number;
   ref?: string;
@@ -153,6 +157,8 @@ function buildFrame(frame: FrameCapture, offsetY: number, ctx: Context): ONode[]
     }
 
     const node: ONode = {...base(ax), kind: 'element', role, name, states: states(ax), children, interactive: interactiveRole, y: yOf(own)};
+    if (role === 'link' && own?.attrs.href) node.href = own.attrs.href;
+    if (role === 'heading') node.level = Number(property(ax, 'level')) || 2;
     if (label) {
       node.backendNodeId = label.backendNodeId;
       node.proxy = 'label';
