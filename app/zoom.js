@@ -2,7 +2,7 @@
 // the settings slider in app.js reuses it through globalThis.quietZoom.
 // The side panel opens index.html?view=panel, so the panel and the tab keep separate scales.
 globalThis.quietZoom = {
-  key: `quiet-zoom:${new URLSearchParams(location.search).get('view') === 'panel' ? 'panel' : 'tab'}`,
+  key: `notes:zoom:${new URLSearchParams(location.search).get('view') === 'panel' ? 'panel' : 'tab'}`,
   min: 70, max: 120, step: 5, fallback: 100,
   clamp(percent) {
     const value = Math.round(Number(percent) / this.step) * this.step;

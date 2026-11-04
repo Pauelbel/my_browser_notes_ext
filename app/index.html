@@ -1,42 +1,120 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Заметки</title><link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png"><link rel="icon" type="image/svg+xml" href="icons/logo.svg"><link rel="stylesheet" href="style.css"><script src="zoom.js"></script></head>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Заметки</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+<link rel="stylesheet" href="style.css">
+<script src="zoom.js"></script>
+</head>
 <body>
-<header><div class="brand"><img class="logo" src="icons/logo.svg" width="37" height="37" alt="Заметки"><div class="searchrow"><input id="search" type="search" placeholder="Поиск по заметкам и тегам…" aria-label="Поиск"></div></div><div class="header-actions"><div id="syncNotice" hidden><span id="syncText" hidden></span><button id="syncAccess" aria-describedby="syncText" aria-label="Подключить папку" title="Подключить папку"></button></div><span id="status" role="status" aria-live="polite" hidden><img class="saved-check" src="icons/saved.svg" width="22" height="22" alt="" aria-hidden="true"><span id="statusMark" aria-hidden="true" hidden></span><strong id="statusText"></strong></span><button id="refresh" title="Обновить список заметок" aria-label="Обновить список заметок">↻</button><button id="settings" title="Настройки" aria-label="Настройки"><img src="icons/settings.svg" width="28" height="28" alt="" aria-hidden="true"></button></div></header>
-<main>
-<section id="welcome" class="welcome"><div class="paper">Aa<span>────────<br>──────<br>────────</span></div><h1>Место для ваших мыслей</h1><p>Заметки хранятся внутри Chrome и открываются сразу.</p><small>Без аккаунта. Без облака. Без аналитики.</small></section>
-<section id="workspace" hidden>
-<aside id="sidebar" aria-label="Меню заметок">
-<button id="menuToggle" class="menu-toggle" type="button" aria-controls="sidebar" aria-expanded="true">Меню заметок</button>
-<div class="filters"><div class="custom-select"><select id="folderFilter" aria-label="Выбранная папка"></select><button id="folderFilterButton" type="button" aria-haspopup="listbox" aria-expanded="false"></button><div id="folderFilterMenu" class="select-menu" role="listbox" hidden></div></div></div>
-<div id="treeActions" class="tree-actions" hidden><button id="createFolderTree" type="button">Создать папку</button></div>
+<header id="topbar" role="toolbar" aria-label="Управление">
+  <div class="tb-left">
+    <button id="toggleSidebar" data-icon="menu" data-tip="Показать/скрыть список" aria-label="Показать/скрыть список"></button>
+    <button id="newNote" data-icon="notePlus" data-tip="Новая заметка" aria-label="Новая заметка"></button>
+    <button id="newFolder" data-icon="folderPlus" data-tip="Новая папка" aria-label="Новая папка"></button>
+    <button id="deleteNote" data-icon="trash" data-tip="Удалить заметку" aria-label="Удалить заметку"></button>
+  </div>
+  <div class="tb-format" aria-label="Форматирование">
+    <button data-cmd="bold" data-icon="bold" data-tip="Жирный (Ctrl+B)" aria-label="Жирный"></button>
+    <button data-cmd="italic" data-icon="italic" data-tip="Курсив (Ctrl+I)" aria-label="Курсив"></button>
+    <button data-cmd="heading" data-icon="heading" data-tip="Заголовок" aria-label="Заголовок"></button>
+    <button data-cmd="bulletList" data-icon="bulletList" data-tip="Список" aria-label="Список"></button>
+    <button data-cmd="orderedList" data-icon="orderedList" data-tip="Нумерованный список" aria-label="Нумерованный список"></button>
+    <button data-cmd="taskList" data-icon="taskList" data-tip="Задачи" aria-label="Задачи"></button>
+    <button data-cmd="blockquote" data-icon="quote" data-tip="Цитата" aria-label="Цитата"></button>
+    <button data-cmd="codeBlock" data-icon="code" data-tip="Код" aria-label="Код"></button>
+    <button id="insertTable" data-icon="table" data-tip="Таблица" aria-label="Таблица" aria-haspopup="true" aria-expanded="false"></button>
+    <button id="insertImage" data-icon="image" data-tip="Картинка" aria-label="Картинка"></button>
+    <button data-cmd="clear" data-icon="clear" data-tip="Убрать форматирование" aria-label="Убрать форматирование"></button>
+    <button data-cmd="undo" data-icon="undo" data-tip="Отменить (Ctrl+Z)" aria-label="Отменить"></button>
+    <button data-cmd="redo" data-icon="redo" data-tip="Повторить (Ctrl+Shift+Z)" aria-label="Повторить"></button>
+  </div>
+  <div class="tb-right">
+    <button id="themeToggle" data-icon="moon" data-tip="Тёмная тема" aria-label="Переключить тему"></button>
+    <button id="openSettings" data-icon="settings" data-tip="Настройки" aria-label="Настройки"></button>
+  </div>
+</header>
+<div id="tablePicker" class="popover" hidden><div class="table-size">Таблица</div><div class="table-grid"></div></div>
+<input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
 
-<nav role="tablist" aria-label="Раздел заметок"><button id="tree" role="tab" class="active" aria-selected="true">Заметки</button><button id="tagsView" role="tab" aria-selected="false">Теги</button><button id="trash" role="tab" aria-selected="false">Корзина</button></nav>
-<div class="vaultbar control-panel" role="group" aria-label="Управление заметками"><button id="new" title="Создать заметку">Создать заметку</button></div>
-<div id="list" class="list"></div>
-</aside>
-<section id="tagView" hidden aria-label="Теги"><div class="tag-heading"><h1>Теги</h1><p>Выберите тег, чтобы показать связанные заметки.</p></div><div id="tagCloud" class="tag-cloud" aria-label="Облако тегов"></div><div id="tagNotes" class="tag-notes"></div></section>
-<section id="trashView" hidden aria-label="Корзина">
-<div class="trash-heading"><div><h1>Корзина</h1><p id="trashCount"></p></div><button id="emptyTrash" class="danger">Очистить корзину</button></div>
-<input id="trashSearch" type="search" placeholder="Найти в корзине…" aria-label="Поиск в корзине">
-<div class="trash-actions"><label class="select-all"><input id="selectAllTrash" type="checkbox"> Выбрать все</label><span id="selectedTrashCount" role="status"></span><button id="restoreSelected" disabled>Восстановить</button><button id="purgeSelected" class="danger" disabled>Удалить навсегда</button></div>
-<p id="trashSync" class="trash-sync" hidden></p>
-<div id="trashList"></div>
-</section>
-<section id="editor" hidden>
-<div class="note-heading"><input id="title" class="title" placeholder="Без названия" aria-label="Название заметки"><button id="restore" hidden>Восстановить</button></div>
-<div class="metadata-row"><div class="metadata"><div class="custom-select"><select id="noteFolder" aria-label="Папка заметки"></select><button id="noteFolderButton" type="button" aria-haspopup="listbox" aria-expanded="false"></button><div id="noteFolderMenu" class="select-menu" role="listbox" hidden></div></div></div><div class="tag-entry"><div id="noteTags" class="tags"></div><div class="tag-picker"><input id="tags" placeholder="＋ Тег" aria-label="Добавить теги" title="теги через пробел или enter" autocomplete="off" aria-haspopup="listbox" aria-expanded="false"><button id="tagMenuButton" type="button" title="Показать существующие теги" aria-label="Показать существующие теги">▾</button><div id="tagSuggestions" class="tag-suggestions" role="listbox" hidden></div></div></div></div>
-<div id="editorSaveStatus" class="editor-save-status" role="status" aria-live="polite"><span id="editorSaveIcon" aria-hidden="true">✓</span><span id="editorSaveText">Сохранено</span><span class="autosave-hint">изменения сохраняются автоматически</span></div>
-<div class="toolbar" role="toolbar" aria-label="Форматирование"><div class="toolbar-group"><button data-command="bold" title="Жирный (Ctrl+B)" aria-label="Жирный"><b>B</b></button><button data-command="italic" title="Курсив (Ctrl+I)" aria-label="Курсив"><i>I</i></button><button data-command="heading" title="Заголовок" aria-label="Заголовок">H₂</button><button data-command="bulletList" title="Список" aria-label="Список">≡</button><button data-command="taskList" title="Список задач" aria-label="Список задач">☑</button><button data-command="blockquote" title="Цитата" aria-label="Цитата">❝</button></div><div class="toolbar-group"><button id="insertImage" type="button" title="Вставить изображение" aria-label="Вставить изображение">📷</button><button data-command="clear" title="Убрать форматирование" aria-label="Убрать форматирование">T×</button><button data-command="undo" title="Отменить" aria-label="Отменить">↶</button><button data-command="redo" title="Повторить" aria-label="Повторить">↷</button></div><div class="toolbar-group toolbar-actions"><div class="note-menu-wrap"><button id="noteMenuButton" class="more-button" title="Действия с заметкой" aria-label="Действия с заметкой" aria-haspopup="menu" aria-expanded="false">⋮</button><div id="noteMenu" class="note-menu" role="menu" hidden><button id="delete" class="delete-note-action" role="menuitem">Удалить заметку</button></div></div></div></div><input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
-<div id="body" class="rich-editor"></div>
-</section>
-</section>
-<p id="message" role="alert" hidden></p>
-</main>
-<dialog id="mergeArchiveDialog" aria-labelledby="mergeArchiveTitle" aria-describedby="mergeArchiveCount mergeArchiveHelp mergeArchiveCopies replaceArchiveHelp"><h2 id="mergeArchiveTitle">В папке найдены заметки</h2><p id="mergeArchiveCount"></p><p id="mergeArchiveHelp">При объединении заметки из выбранной папки появятся в расширении. Заметки, которые уже есть в расширении, тоже будут сохранены в эту папку.</p><p id="mergeArchiveCopies"><strong>Если у заметки есть отличающаяся копия в той же папке, сохранятся обе версии.</strong> Версия из расширения получит пометку «браузерная копия», а версия из папки останется с исходным названием. Одинаковые версии одного файла не дублируются.</p><p>Существующие файлы в папке не перезаписываются. Подпапки сохраняются, посторонние файлы остаются на месте.</p><p id="replaceArchiveHelp"><strong>«Заменить заметками из папки»:</strong> в браузере останутся только заметки и корзина из выбранной папки. Текущие браузерные заметки и корзина будут удалены. Файлы в выбранной папке не изменятся. Если прочитать папку не удастся, ваши заметки сохранятся.</p><div class="confirm-actions"><button id="cancelArchiveMerge" type="button" aria-describedby="replaceArchiveHelp" title="Удалить текущие заметки браузера и загрузить только содержимое выбранной папки.">Заменить заметками из папки</button><button id="otherArchive">Выбрать другую папку</button><button id="confirmMergeArchive" class="primary">Объединить с моими заметками</button></div></dialog>
-<dialog id="purgeDialog" aria-labelledby="purgeTitle"><h2 id="purgeTitle">Удалить заметки навсегда?</h2><p id="purgeDescription"></p><ul id="purgeNames"></ul><p>Восстановить их из корзины будет невозможно.</p><div class="confirm-actions"><button id="cancelPurge" autofocus>Отмена</button><button id="confirmPurge" class="danger">Удалить навсегда</button></div></dialog>
-<dialog id="folderTrashDialog" aria-labelledby="folderTrashTitle"><h2 id="folderTrashTitle">Удалить папку?</h2><p id="folderTrashDescription"></p><p>Заметки попадут в корзину вместе с содержимым вложенных папок. При восстановлении заметок их папки будут созданы заново.</p><div class="confirm-actions"><button id="cancelFolderTrash" autofocus>Отмена</button><button id="confirmFolderTrash" class="danger">В корзину</button></div></dialog>
-<dialog id="newFolderDialog" aria-labelledby="newFolderTitle"><form id="newFolderForm"><h2 id="newFolderTitle">Новая папка</h2><input id="newFolderName" name="name" maxlength="70" autocomplete="off" placeholder="Название папки" required><div class="confirm-actions"><button id="cancelNewFolder" type="button">Отмена</button><button type="submit">Создать</button></div></form></dialog>
-<dialog id="renameFolderDialog" aria-labelledby="renameFolderTitle"><form id="renameFolderForm"><h2 id="renameFolderTitle">Переименовать папку</h2><label for="renameFolderName">Новое название</label><input id="renameFolderName" name="name" maxlength="70" autocomplete="off" required><div class="confirm-actions"><button id="cancelRenameFolder" type="button">Отмена</button><button type="submit">Сохранить</button></div></form></dialog>
-<dialog id="noteTrashDialog" aria-labelledby="noteTrashTitle"><h2 id="noteTrashTitle">Удалить заметку?</h2><p id="noteTrashDescription"></p><p>Заметка будет перемещена в корзину, откуда её можно восстановить.</p><div class="confirm-actions"><button id="cancelNoteTrash" autofocus>Отмена</button><button id="confirmNoteTrash" class="danger">В корзину</button></div></dialog>
-<dialog id="preferences"><form method="dialog"><div class="dialoghead"><h2>Настройки</h2><button aria-label="Закрыть">✕</button></div></form><section><h3>Папка с заметками</h3><p id="folderInfo">Папка с заметками не выбрана.</p><button id="changeFolder">Выбрать папку</button><p class="muted">Заметки всегда хранятся в Chrome. При подключении папки они синхронизируются в обе стороны: новые и изменённые .md-файлы из папки подтягиваются в расширение, а изменения из расширения записываются в папку. Пока панель открыта и видна, папка проверяется каждые 30 секунд.</p><h3>Архивация</h3><p class="muted">Кнопка «Архивировать всё» сохраняет все заметки, папки и корзину в выбранную папку. Заметки остаются в расширении.</p><button id="archiveSettings" type="button">Архивировать всё</button><h3>Меню заметок</h3><div class="side-switch" role="group" aria-label="Положение меню заметок"><button id="menuLeft">Слева</button><button id="menuRight">Справа</button></div><p>Меняет расположение списка заметок относительно редактора.</p><h3>Масштаб</h3><div class="zoom-row"><input id="zoom" type="range" aria-label="Масштаб интерфейса" aria-describedby="zoomHelp"><output id="zoomValue" for="zoom"></output><button id="zoomReset" type="button">Сбросить</button></div><p id="zoomHelp">Меняет размер кнопок, меню и шрифтов интерфейса. Текст заметки остаётся прежним. У боковой панели и вкладки свой масштаб.</p><h3>Положение панели Chrome</h3><p>Откройте настройки Chrome, чтобы изменить сторону боковой панели.</p><button id="placement">Открыть настройки Chrome ↗</button><h3>Больше места</h3><button id="openTab">Открыть заметки во вкладке ↗</button></section></dialog>
-<script type="module" src="app.js"></script></body></html>
+<div id="app">
+  <aside id="sidebar" aria-label="Заметки">
+    <input id="search" type="search" placeholder="найти заметку…" aria-label="Поиск" autocomplete="off">
+    <div id="tree" role="tree"></div>
+  </aside>
+  <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Ширина списка"></div>
+  <main id="note" hidden>
+    <input id="title" placeholder="Без названия" aria-label="Название" autocomplete="off">
+    <div id="meta">
+      <span id="path"></span>
+      <span class="sep">·</span>
+      <span id="tags"></span>
+      <span class="tag-add">
+        <button id="addTag" data-tip="Добавить тег" aria-label="Добавить тег">＋</button>
+        <input id="tagInput" placeholder="тег" aria-label="Новый тег" autocomplete="off" hidden>
+        <span id="tagSuggest" class="popover" role="listbox" hidden></span>
+      </span>
+      <span class="sep">·</span>
+      <span id="saveState" role="status" aria-live="polite"></span>
+    </div>
+    <div id="editor"></div>
+  </main>
+  <div id="empty" hidden><p>Нет заметок.<br>Создайте первую — ＋ сверху.</p></div>
+</div>
+
+<div id="treeMenu" class="popover menu" role="menu" hidden>
+  <button data-action="note" role="menuitem">Новая заметка здесь</button>
+  <button data-action="folder" role="menuitem">Новая подпапка</button>
+  <button data-action="rename" role="menuitem">Переименовать</button>
+  <button data-action="delete" role="menuitem" class="danger">Удалить</button>
+</div>
+<div id="tableContext" class="popover" role="toolbar" aria-label="Таблица" hidden>
+  <button data-cmd="addRowAfter">+ строка</button>
+  <button data-cmd="addColumnAfter">+ столбец</button>
+  <button data-cmd="deleteRow" class="danger">− строка</button>
+  <button data-cmd="deleteColumn" class="danger">− столбец</button>
+  <button data-cmd="deleteTable" class="danger">удалить таблицу</button>
+</div>
+
+<dialog id="confirmDialog">
+  <form method="dialog">
+    <p id="confirmText"></p>
+    <div class="actions"><button value="cancel" autofocus>Отмена</button><button id="confirmOk" value="ok" class="danger">Удалить навсегда</button></div>
+  </form>
+</dialog>
+<dialog id="promptDialog">
+  <form method="dialog">
+    <label id="promptTitle" for="promptInput"></label>
+    <input id="promptInput" maxlength="70" autocomplete="off">
+    <div class="actions"><button value="cancel" formnovalidate>Отмена</button><button value="ok" class="primary">Сохранить</button></div>
+  </form>
+</dialog>
+<dialog id="settingsDialog" aria-labelledby="settingsTitle">
+  <form method="dialog" class="dialog-head"><h2 id="settingsTitle">Настройки</h2><button aria-label="Закрыть">✕</button></form>
+  <section>
+    <h3>Резервная копия</h3>
+    <p class="muted">Все заметки сохраняются как .md-файлы в новую папку с датой внутри выбранной. Ничего не перезаписывается.</p>
+    <p>Папка: <strong id="backupDir">не выбрана</strong></p>
+    <div class="row"><button id="chooseBackupDir">Выбрать папку</button><button id="runBackup" class="primary">Сохранить копию</button></div>
+    <p id="backupResult" class="muted" role="status"></p>
+  </section>
+  <section>
+    <h3>Масштаб</h3>
+    <div class="row"><input id="zoom" type="range" aria-label="Масштаб интерфейса"><output id="zoomValue" for="zoom"></output><button id="zoomReset">Сбросить</button></div>
+    <p class="muted">У боковой панели и вкладки свой масштаб. Текст заметки не меняется.</p>
+  </section>
+  <section>
+    <h3>Список заметок</h3>
+    <div class="row segmented"><button id="sideLeft">Слева</button><button id="sideRight">Справа</button></div>
+  </section>
+  <section>
+    <h3>Окно</h3>
+    <div class="row"><button id="openTab">Открыть во вкладке ↗</button><button id="chromePanel">Положение панели Chrome ↗</button></div>
+  </section>
+</dialog>
+<div id="tip" role="tooltip" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
