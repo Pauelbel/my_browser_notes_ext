@@ -29,3 +29,12 @@ export function renderMarkdown(text: string): string {
   const html = marked.parse(text, {gfm: true, breaks: true, async: false});
   return purify().sanitize(html, {FORBID_TAGS, FORBID_ATTR: ['style', 'srcset']});
 }
+
+/** Element labels from page descriptions (a12, ba3) that the model sometimes shows despite being told not to:
+ * they mean nothing to the user. A Markdown link or reference definition written that way stays. */
+const REF = '`?\\[[a-z]{1,3}\\d{1,5}\\]`?';
+export function hideRefs(text: string): string {
+  return text
+    .replace(new RegExp(`\\s?\\(\\s*${REF}\\s*\\)`, 'g'), '')
+    .replace(new RegExp(`[ \\t]?${REF}(?![(:\\[])`, 'g'), '');
+}

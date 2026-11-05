@@ -4,7 +4,7 @@ import type {PanelAnswer, PendingPrompt, WorkerToPanel} from '../shared/protocol
 import type {ChatMode, Message, PermissionMode, Profile} from '../store/types.ts';
 import type {Client} from './client.ts';
 import {applyEvent, emptyChat, type ChatState} from './chat-state.ts';
-import {renderMarkdown} from './markdown.ts';
+import {hideRefs, renderMarkdown} from './markdown.ts';
 import {getConversation, listMessages, listProfiles, onAssistantChange} from '../store/assistant-db.ts';
 import {getSettings, saveSettings} from '../store/settings.ts';
 import {listModels} from '../llm/ollama.ts';
@@ -85,7 +85,7 @@ export function initChat(client: Client): ChatView {
       line.textContent = `${s.status === 'running' ? '…' : s.status === 'error' ? '✕' : '✓'} ${s.name}${s.input ? ` ${s.input}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;
       return line;
     }));
-    node.querySelector('.md')!.innerHTML = renderMarkdown(message.text);
+    node.querySelector('.md')!.innerHTML = renderMarkdown(hideRefs(message.text));
     const status = node.querySelector('.msg-status')!;
     const running = message.steps?.find(s => s.status === 'running');
     status.textContent = message.status === 'streaming' ? (running ? `смотрю страницу: ${running.name}…` : message.text ? '' : 'печатает…') : STATUS_TEXT[message.status] ?? '';

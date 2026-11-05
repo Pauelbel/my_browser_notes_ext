@@ -29,3 +29,11 @@ test('renderMarkdown: стили и формы вырезаны', () => {
   const html = renderMarkdown('<style>#composer{display:none}</style><div style="position:fixed;inset:0">x</div><form><input><button>b</button></form><iframe src="https://e.x"></iframe>');
   assert.doesNotMatch(html, /<style|style=|<form|<input|<button|<iframe/);
 });
+
+test('hideRefs: метки элементов не показываются, обычные скобки и ссылки остаются', async () => {
+  // The model is told not to show labels, but sometimes does: «Удалить черновик» [g1], (элемент [b24]).
+  const {hideRefs} = await import('../src/ui/markdown.ts');
+  assert.equal(hideRefs('Кнопка «Удалить черновик» [g1]. Нажал.'), 'Кнопка «Удалить черновик». Нажал.');
+  assert.equal(hideRefs('Заголовок «29 комментариев» ([b24]) и поле `[ba3]`.'), 'Заголовок «29 комментариев» и поле.');
+  assert.equal(hideRefs('[a1](https://x.y) и сноска [1] и [тег] и\n[a2]: https://x.y'), '[a1](https://x.y) и сноска [1] и [тег] и\n[a2]: https://x.y');
+});

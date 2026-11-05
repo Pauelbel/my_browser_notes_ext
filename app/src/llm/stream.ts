@@ -3,10 +3,13 @@ import {streamText, stepCountIs, type ToolSet} from 'ai';
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible';
 import type {Settings} from '../store/types.ts';
 
-export interface ModelMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+/** Earlier steps go to the model as the calls they were, each followed by its short result. */
+export type HistoryPart = {type: 'text'; text: string} | {type: 'tool-call'; toolCallId: string; toolName: string; input: unknown};
+export interface ToolResultPart { type: 'tool-result'; toolCallId: string; toolName: string; output: {type: 'text'; value: string} }
+export type ModelMessage =
+  | {role: 'user'; content: string}
+  | {role: 'assistant'; content: string | HistoryPart[]}
+  | {role: 'tool'; content: ToolResultPart[]};
 
 export type StreamPart =
   | {type: 'text'; delta: string}

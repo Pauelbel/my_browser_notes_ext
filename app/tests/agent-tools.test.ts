@@ -9,12 +9,24 @@ import type {Profile} from '../src/store/types.ts';
 const [assistant, qa] = DEFAULT_PROFILES;
 const json = (body: unknown) => (async () => new Response(JSON.stringify(body), {status: 200})) as unknown as typeof fetch;
 
-test('buildChatTools: только читающие инструменты, отмеченные в профиле', () => {
-  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks']);
+test('buildChatTools: читающие инструменты и подсветка, отмеченные в профиле', () => {
+  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks', 'highlight', 'clear_highlights']);
   const notes = {search: async () => '', read: async () => '', create: async () => '', append: async () => ''};
-  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['console_log', 'find', 'network_log', 'notes_read', 'notes_search', 'page_checks', 'read', 'snapshot']);
+  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['clear_highlights', 'console_log', 'find', 'highlight', 'network_log', 'notes_read', 'notes_search', 'page_checks', 'read', 'snapshot']);
   const noFind: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'find')};
   assert.ok(!('find' in buildChatTools(noFind, async () => { throw new Error('не нужно'); })));
+});
+
+test('buildChatTools: подсветка в чате уходит на страницу', async () => {
+  // Highlighting only draws over the page, so Chat mode offers it: "выдели текст" is a reading request.
+  const calls: unknown[] = [];
+  const page = {snapshot: async () => ({ok: true, text: ''}), find: async () => ({ok: true, text: ''}), read: async () => ({ok: true, text: ''}),
+    highlight: async (a: unknown) => { calls.push(['highlight', a]); return {ok: true, text: 'выделено мест: 1 (цвет yellow)'}; },
+    clearHighlights: async () => { calls.push(['clear']); return {ok: true, text: 'подсветка снята'}; }};
+  const tools = buildChatTools(assistant, async () => page) as any;
+  assert.equal(await tools.highlight.execute({text: '29 комментариев'}, {toolCallId: '1', messages: []}), 'выделено мест: 1 (цвет yellow)');
+  assert.equal(await tools.clear_highlights.execute({}, {toolCallId: '2', messages: []}), 'подсветка снята');
+  assert.deepEqual(calls, [['highlight', {text: '29 комментариев'}], ['clear']]);
 });
 
 test('buildChatTools: страница подключается только при вызове инструмента', async () => {
@@ -32,6 +44,9 @@ test('systemPrompt: с инструментами — правило о соде
   // Clicking, typing, scrolling and navigating are Agent mode: the model points there instead of "I can't".
   assert.ok(withTools.includes('режим «Агент»'));
   assert.ok(!withTools.includes('пока не умеешь'));
+  // The model once answered «Я выделил» without any highlight call.
+  assert.ok(withTools.includes('не вызывал'));
+  assert.ok(systemPrompt(assistant, ['snapshot', 'highlight']).includes('highlight — подсветить'));
   assert.ok(withTools.includes('snapshot'));
   assert.ok(withTools.includes('Не показывай пользователю метки'));
   const without = systemPrompt(assistant, []);

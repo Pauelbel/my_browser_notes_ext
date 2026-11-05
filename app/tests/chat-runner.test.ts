@@ -293,7 +293,7 @@ test('шаги инструментов сохраняются', async () => {
   assert.equal(finished.message.steps?.[0].status, 'done');
   assert.equal(events.filter(e => e.type === 'step').length, 2);
   assert.equal(model.calls[0].maxSteps, 5);
-  assert.deepEqual(Object.keys(model.calls[0].tools ?? {}).sort(), ['find', 'read', 'snapshot']);
+  assert.deepEqual(Object.keys(model.calls[0].tools ?? {}).sort(), ['clear_highlights', 'find', 'highlight', 'read', 'snapshot']);
   assert.equal(counts.opened, 1);
   const stored = await db.listMessages(finished.conversationId);
   assert.equal(stored[1].steps?.[0].name, 'snapshot');

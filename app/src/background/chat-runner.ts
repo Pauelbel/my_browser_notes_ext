@@ -17,6 +17,9 @@ import type {Gate, PageTools} from '../page/index.ts';
 import {PromptBroker} from './prompts.ts';
 import {createAgentSession} from './agent-session.ts';
 
+/** Step arguments longer than this (as JSON) are not kept for the history. */
+const ARGS_MAX = 2000;
+
 /** Model turns in one Agent-mode reply (nanobrowser's turn cap). */
 export const AGENT_MAX_STEPS = 100;
 
@@ -230,6 +233,8 @@ export class ChatRunner {
         }
         if (part.type === 'tool-call') {
           const step: ToolStep = {id: part.id, name: part.name as ToolName, input: describeInput(part.input), status: 'running', summary: ''};
+          // The arguments go back to the model in the history as the call they were; a large one (a note's body) does not.
+          if (JSON.stringify(part.input ?? {}).length <= ARGS_MAX) step.args = part.input ?? {};
           reply.steps!.push(step);
           emitStep(step);
           if (!run.deleted) await putMessage({...reply, steps: [...reply.steps!]});

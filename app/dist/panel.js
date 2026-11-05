@@ -3765,6 +3765,10 @@ function renderMarkdown(text2) {
   const html2 = x.parse(text2, { gfm: true, breaks: true, async: false });
   return purify().sanitize(html2, { FORBID_TAGS, FORBID_ATTR: ["style", "srcset"] });
 }
+var REF = "`?\\[[a-z]{1,3}\\d{1,5}\\]`?";
+function hideRefs(text2) {
+  return text2.replace(new RegExp(`\\s?\\(\\s*${REF}\\s*\\)`, "g"), "").replace(new RegExp(`[ \\t]?${REF}(?![(:\\[])`, "g"), "");
+}
 
 // src/store/settings.ts
 var DEFAULT_SETTINGS = { ollamaUrl: "http://localhost:11434", model: "", siteRules: {}, border: true };
@@ -3943,7 +3947,7 @@ function initChat(client2) {
       line.textContent = `${s.status === "running" ? "\u2026" : s.status === "error" ? "\u2715" : "\u2713"} ${s.name}${s.input ? ` ${s.input}` : ""}${s.summary ? ` \u2014 ${s.summary}` : ""}`;
       return line;
     }));
-    node.querySelector(".md").innerHTML = renderMarkdown(message.text);
+    node.querySelector(".md").innerHTML = renderMarkdown(hideRefs(message.text));
     const status = node.querySelector(".msg-status");
     const running2 = message.steps?.find((s) => s.status === "running");
     status.textContent = message.status === "streaming" ? running2 ? `\u0441\u043C\u043E\u0442\u0440\u044E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443: ${running2.name}\u2026` : message.text ? "" : "\u043F\u0435\u0447\u0430\u0442\u0430\u0435\u0442\u2026" : STATUS_TEXT[message.status] ?? "";

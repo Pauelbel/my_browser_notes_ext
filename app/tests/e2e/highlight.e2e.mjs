@@ -30,6 +30,13 @@ export default async function ({openPage, base, server, send, sleep, log}) {
   must(litShare > 0.2, `подсветка не видна на скриншоте (${litShare})`);
   must(await inTab(`document.querySelectorAll('*').length`) === nodesBefore, 'подсветка текста изменила DOM');
 
+  // Text split over elements, as YouTube writes «29 комментариев»: with a space between them and with only a margin.
+  const split = await call('highlight', {text: '29 комментариев', color: 'green'});
+  must(split.ok && split.text.includes('выделено мест: 1'), `текст из двух элементов: ${split.text}`);
+  const glued = await call('highlight', {text: 'всего  отзывов', color: 'green'});
+  must(glued.ok && glued.text.includes('выделено мест: 1'), `текст без пробела между элементами: ${glued.text}`);
+  must(await inTab(`[...CSS.highlights.get('assistant-green')].length`).catch(() => null) !== 0, 'нет зелёной подсветки');
+
   const snap = await call('snapshot', {mode: 'all'});
   const ref = snap.text.match(/\[([a-zA-Z]+\d+)\] button "Применить"/)?.[1];
   must(ref, `нет метки кнопки: ${snap.text}`);
@@ -54,4 +61,16 @@ export default async function ({openPage, base, server, send, sleep, log}) {
   const restored = await share();
   log(`после возврата: ${restored.toFixed(2)}`);
   must(restored > 0.2, `подсветка не восстановилась (${restored})`);
+
+  // Chat mode attaches for one reply and detaches: the highlight stays, and the next reply (a new connection) clears it.
+  const snap2 = await call('snapshot', {mode: 'all'});
+  await call('highlight', {ref: snap2.text.match(/\[([a-zA-Z]+\d+)\] button "Применить"/)?.[1], color: 'red'});
+  await dev.eval(`layer.done(${tab})`);
+  await sleep(300);
+  must(await share() > 0.2, 'подсветка пропала после отключения');
+  const next = await call('clearHighlights');
+  must(next.ok, `clear в новом подключении: ${next.text}`);
+  await sleep(200);
+  must(await share() < 0.05, 'подсветка прошлого подключения не снялась');
+  must(await inTab(`document.querySelectorAll('[data-assistant-overlay]').length`) === 0, 'рамка прошлого подключения не снялась');
 }

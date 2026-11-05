@@ -1,4 +1,4 @@
-// The tools the model gets. Chat mode reads the current page and the notes; Agent mode also acts: pages, tabs,
+// The tools the model gets. Chat mode reads the current page and the notes and highlights on it; Agent mode also acts: pages, tabs,
 // highlights, notes, questions to the user, and `done` to finish. Pages open lazily, on the first call.
 import {tool, type ToolSet} from 'ai';
 import {z} from 'zod';
@@ -6,7 +6,8 @@ import type {Profile, ToolName} from '../store/types.ts';
 import type {NotesApi} from './notes.ts';
 import type {ScreenshotStore} from './screenshots.ts';
 
-export const CHAT_TOOLS: ToolName[] = ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks'];
+// Highlighting only draws over the page (it changes nothing the site sees), so Chat mode has it too.
+export const CHAT_TOOLS: ToolName[] = ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks', 'highlight', 'clear_highlights'];
 /** Every tool is offered now; screenshot additionally depends on the model seeing images. */
 const NOT_YET: ToolName[] = [];
 
@@ -21,6 +22,8 @@ export interface ReadTools {
   consoleLog?(args: {level?: 'error' | 'warning' | 'all'; reload?: boolean}): Result;
   networkLog?(args: {reload?: boolean}): Result;
   pageChecks?(): Result;
+  highlight?(args: {ref?: string; text?: string; color?: string}): Result;
+  clearHighlights?(): Result;
 }
 export interface ActTools extends ReadTools {
   click(args: {ref: string}): Result;
@@ -97,6 +100,20 @@ function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes
     inputSchema: z.object({role: z.string().optional(), name: z.string().optional(), text: z.string().optional()}),
     execute: async input => (await (await page()).find(input)).text,
   });
+  const draw = async (name: 'highlight' | 'clearHighlights', args?: object) => {
+    const target = await page();
+    const fn = target[name] as ((a?: object) => Result) | undefined;
+    return fn ? (await fn.call(target, args)).text : 'ошибка: подсветка недоступна';
+  };
+  if (enabled.has('highlight')) tools.highlight = tool({
+    description: 'Подсветить на странице фрагмент текста (text) или элемент (ref) цветом: yellow, green, blue, red, orange.',
+    inputSchema: z.object({text: z.string().optional(), ref: z.string().describe('метка элемента из snapshot, например a12').optional(),
+      color: z.enum(['yellow', 'green', 'blue', 'red', 'orange']).optional()}),
+    execute: async input => draw('highlight', input),
+  });
+  if (enabled.has('clear_highlights')) tools.clear_highlights = tool({
+    description: 'Снять подсветку на текущей странице.', inputSchema: z.object({}), execute: async () => draw('clearHighlights'),
+  });
   if (enabled.has('read')) tools.read = tool({
     description: 'Прочитать текст текущей страницы в Markdown, целиком или внутри элемента с меткой ref.',
     inputSchema: z.object({ref: z.string().optional()}),
@@ -151,10 +168,6 @@ export function buildAgentTools(profile: Profile, ctx: AgentContext): ToolSet {
     inputSchema: z.object({url: z.string().optional(), action: z.enum(['back', 'forward', 'reload']).optional()}), execute: async (a: object) => page('navigate', a)});
   add('handle_dialog', {description: 'Ответить на диалог страницы (alert/confirm): accept=true — OK, false — Отмена.',
     inputSchema: z.object({accept: z.boolean(), text: z.string().optional()}), execute: async (a: {accept: boolean}) => page('handleDialog', a)});
-  add('highlight', {description: 'Подсветить на странице фрагмент текста (text) или элемент (ref) цветом: yellow, green, blue, red, orange.',
-    inputSchema: z.object({text: z.string().optional(), ref: ref.optional(), color: z.enum(['yellow', 'green', 'blue', 'red', 'orange']).optional()}),
-    execute: async (a: object) => page('highlight', a)});
-  add('clear_highlights', {description: 'Снять подсветку на текущей странице.', inputSchema: z.object({}), execute: async () => page('clearHighlights', undefined as never)});
   add('tabs', {description: 'Вкладки задачи: list — список, open — открыть адрес в новой вкладке, switch/close — по tabId из списка.',
     inputSchema: z.object({action: z.enum(['list', 'open', 'switch', 'close']), url: z.string().optional(), tabId: z.number().optional()}),
     execute: async (a: {action: string; url?: string; tabId?: number}) => text(() => a.action === 'open' ? ctx.tabs.open(a.url ?? '')

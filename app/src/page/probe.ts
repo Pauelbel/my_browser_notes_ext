@@ -39,16 +39,36 @@ export const PROBE_SOURCE = `(() => {
   globalThis.__assistant = {
     ${CHECKS_SOURCE}
     highlightText(query, name) {
-      const want = fold(query); if (!want) return 0;
-      const ranges = [];
+      const words = fold(query).split(/\\s+/).filter(Boolean); if (!words.length) return 0;
+      // The visible text as one string with each character's node and offset: sites split a phrase over elements
+      // (YouTube writes «29» and «комментариев» in two spans), so a match may span nodes.
+      let text = ''; const nodes = []; const offsets = [];
       const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
       for (let node; (node = walker.nextNode());) {
         const parent = node.parentElement;
         if (!parent || inOverlay(node) || !parent.getClientRects().length || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(parent.tagName)) continue;
-        const text = fold(node.data);
-        for (let i = text.indexOf(want); i >= 0; i = text.indexOf(want, i + want.length)) {
-          const r = new Range(); r.setStart(node, i); r.setEnd(node, i + want.length); ranges.push(r);
+        for (let i = 0; i < node.data.length; i++) {
+          const c = fold(node.data[i]);
+          text += c.length === 1 ? c : node.data[i];
+          nodes.push(node); offsets.push(i);
         }
+      }
+      // Words follow each other with any whitespace between them, or none (a gap drawn by a margin).
+      const endOf = start => {
+        let p = start;
+        for (let w = 0; w < words.length; w++) {
+          if (w) while (p < text.length && /\\s/.test(text[p])) p++;
+          if (!text.startsWith(words[w], p)) return -1;
+          p += words[w].length;
+        }
+        return p;
+      };
+      const ranges = [];
+      for (let i = text.indexOf(words[0]); i >= 0;) {
+        const end = endOf(i);
+        if (end < 0) { i = text.indexOf(words[0], i + 1); continue; }
+        const r = new Range(); r.setStart(nodes[i], offsets[i]); r.setEnd(nodes[end - 1], offsets[end - 1] + 1); ranges.push(r);
+        i = text.indexOf(words[0], end);
       }
       if (!ranges.length) return 0;
       const h = highlights.get(name) || new Highlight();

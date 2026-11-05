@@ -38,6 +38,8 @@ export interface ToolStep {
   name: ToolName;
   /** The arguments in a few words, for display. */
   input: string;
+  /** The arguments as called, for the history the model is sent (absent when large, or in steps saved before). */
+  args?: unknown;
   status: 'running' | 'done' | 'error';
   /** The first line of the result, or the error. */
   summary: string;
