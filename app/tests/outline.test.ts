@@ -97,3 +97,15 @@ test('form: подпись поля не дублируется отдельны
   assert.equal(all(roots).filter(n => n.kind === 'text' && n.name === 'Имя').length, 0, lines(roots).join('\n'));
   assert.ok(find(roots, 'textbox', 'Имя'));
 });
+
+test('zero-body: тело нулевой высоты и display:contents не прячут страницу, обрезка нулевым блоком прячет', () => {
+  // YouTube: <body> has height 0 and the whole page sits in positioned children; the outline was empty.
+  const {roots} = buildOutline(load('zero-body'));
+  const text = lines(roots).join('\n');
+  assert.ok(find(roots, 'heading', 'Видео на странице'), text);
+  assert.ok(find(roots, 'button', 'Нравится')?.interactive, text);
+  assert.ok(find(roots, 'link', '1 234 комментария'), text);
+  assert.ok(all(roots).some(n => n.kind === 'text' && n.name.includes('выходит из блока')), text);
+  assert.ok(!text.includes('Спрятано обрезкой'), text);
+  assert.ok(!find(roots, 'button', 'Скрытая кнопка'), text);
+});

@@ -561,13 +561,18 @@ function decodeSnapshot(raw) {
       const parentIndex = n.parentIndex[i];
       const rendered = Boolean(bounds && bounds.width * bounds.height > 0) && style("display") !== "none" && !["hidden", "collapse"].includes(style("visibility")) && style("opacity") !== "0";
       const isElement = n.nodeType[i] === 1;
+      const tag = str(n.nodeName[i]).toLowerCase();
+      const clips = (axis) => !["", "visible"].includes(style(axis));
+      const clipsToNothing = Boolean(bounds) && !["html", "body"].includes(tag) && (bounds.width === 0 && clips("overflow-x") || bounds.height === 0 && clips("overflow-y"));
+      const styleHidden = style("display") === "none" || ["hidden", "collapse"].includes(style("visibility")) || style("opacity") === "0";
       out.set(n.backendNodeId[i], {
         backendNodeId: n.backendNodeId[i],
-        tag: str(n.nodeName[i]).toLowerCase(),
+        tag,
         attrs,
         parent: parentIndex >= 0 ? n.backendNodeId[parentIndex] : -1,
         bounds,
         rendered,
+        hidden: isElement && (styleHidden || clipsToNothing),
         clickable: isElement && (clickListener.has(i) || pointer[i] && !(parentIndex >= 0 && pointer[parentIndex])),
         text: n.nodeType[i] === 3 ? str(n.nodeValue[i]) : void 0
       });
@@ -716,12 +721,14 @@ function buildFrame(frame, offsetY, ctx) {
     }
     if (consumedLabels.has(ax.backendDOMNodeId ?? -1)) return [];
     const label = own ? labelFor.get(own.backendNodeId) : void 0;
-    if (own && !own.rendered && !label) return [];
+    const noBox = Boolean(own && !own.rendered && !label);
+    if (noBox && own.hidden) return [];
     const name = cleanText(nameOf(ax));
     const interactiveRole = INTERACTIVE_ROLES.has(role);
     const children = kids(insideInteractive || interactiveRole);
+    if (noBox && children.length === 0) return [];
     if (!own && children.length === 0 && !interactiveRole) return [];
-    const becomesClickable = !interactiveRole && !insideInteractive && Boolean(own?.clickable) && role !== "RootWebArea" && !["html", "body"].includes(own?.tag ?? "") && !hasInteractive(children);
+    const becomesClickable = !noBox && !interactiveRole && !insideInteractive && Boolean(own?.clickable) && role !== "RootWebArea" && !["html", "body"].includes(own?.tag ?? "") && !hasInteractive(children);
     if (becomesClickable) {
       const full = name || textOf(children);
       const short = full.length > CLICKABLE_NAME_MAX ? `${full.slice(0, CLICKABLE_NAME_MAX - 1).trimEnd()}\u2026` : full;

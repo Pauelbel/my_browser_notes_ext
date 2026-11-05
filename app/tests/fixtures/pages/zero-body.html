@@ -1,0 +1,17 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Тело нулевой высоты</title>
+<style>
+/* Laid out like YouTube: the body has no height, everything sits in positioned children. */
+body{margin:0;height:0}
+#app{position:absolute;top:0;left:0;right:0;padding:16px;font:16px sans-serif}
+.contents{display:contents}
+.flat{height:0}
+.clipped{height:0;overflow:hidden}
+</style></head><body>
+<div id="app">
+  <h1>Видео на странице</h1>
+  <div class="contents"><button id="like">Нравится</button></div>
+  <div class="flat"><p>Текст выходит из блока высотой ноль</p></div>
+  <div class="clipped"><p>Спрятано обрезкой</p><button>Скрытая кнопка</button></div>
+  <a href="#c">1 234 комментария</a>
+</div>
+</body></html>

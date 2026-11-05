@@ -3,7 +3,7 @@
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
-const PAGES = ['basic', 'form', 'overlay', 'divbuttons', 'shadow', 'frames', 'long-list', 'hover'];
+const PAGES = ['basic', 'form', 'overlay', 'divbuttons', 'shadow', 'frames', 'long-list', 'hover', 'zero-body'];
 
 export default async function ({openPage, base, server, sleep, appDir, log}) {
   const dev = await openPage(`${base}/dev.html`);

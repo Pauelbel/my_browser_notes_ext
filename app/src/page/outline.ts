@@ -1,5 +1,5 @@
 // The page as an outline the model can read: the accessibility tree of every frame, cleaned up (structural wrappers
-// collapse, repeated text goes), joined with layout (what is not rendered is dropped, clickable divs are added),
+// collapse, repeated text goes), joined with layout (what is hidden is dropped, clickable divs are added),
 // with states and values, secrets masked, and every iframe stitched under its own node.
 import {cleanText, nameOf, property, roleOf, valueOf, type AXNode} from './ax.ts';
 import type {Capture, FrameCapture} from './capture.ts';
@@ -140,15 +140,19 @@ function buildFrame(frame: FrameCapture, offsetY: number, ctx: Context): ONode[]
     if (consumedLabels.has(ax.backendDOMNodeId ?? -1)) return [];
 
     const label = own ? labelFor.get(own.backendNodeId) : undefined;
-    if (own && !own.rendered && !label) return [];
+    // A box with no area of its own hides its subtree only when it is hidden or clips; otherwise (a body of height 0
+    // laid out by positioned children, display:contents) it stays for whatever visible content it holds.
+    const noBox = Boolean(own && !own.rendered && !label);
+    if (noBox && own!.hidden) return [];
 
     const name = cleanText(nameOf(ax));
     const interactiveRole = INTERACTIVE_ROLES.has(role);
     const children = kids(insideInteractive || interactiveRole);
+    if (noBox && children.length === 0) return [];
     if (!own && children.length === 0 && !interactiveRole) return [];
     // A clickable element (click listener or pointer area) that holds no control of its own becomes one target;
     // one that wraps controls (a label around an input, a card with buttons) stays a container for them.
-    const becomesClickable = !interactiveRole && !insideInteractive && Boolean(own?.clickable) && role !== 'RootWebArea'
+    const becomesClickable = !noBox && !interactiveRole && !insideInteractive && Boolean(own?.clickable) && role !== 'RootWebArea'
       && !['html', 'body'].includes(own?.tag ?? '') && !hasInteractive(children);
 
     if (becomesClickable) {

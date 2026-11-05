@@ -1,7 +1,9 @@
 // A spot check on real sites (needs the network; run with `pnpm e2e realsites`): snapshot within 5 s and the
 // budget, enough labels, links found, text read. Prints a table; fails on any miss.
 const SITES = ['https://example.com', 'https://developer.mozilla.org/ru/', 'https://github.com/nanobrowser/nanobrowser',
-  'https://ru.wikipedia.org/wiki/Google_Chrome', 'https://news.ycombinator.com'];
+  'https://ru.wikipedia.org/wiki/Google_Chrome', 'https://news.ycombinator.com',
+  // YouTube: <body> has height 0 and everything is in positioned children; the outline was once empty.
+  'https://www.youtube.com/watch?v=O_UzuW6W6e8'];
 const BUDGET = 26214;
 
 export default async function ({openPage, base, sleep, log}) {

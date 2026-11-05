@@ -29,7 +29,9 @@ test('buildChatTools: страница подключается только п�
 test('systemPrompt: с инструментами — правило о содержимом страниц, без — честное «нет доступа»', () => {
   const withTools = systemPrompt(assistant, ['snapshot', 'read']);
   assert.ok(withTools.includes('<<<page-content>>>'));
-  assert.ok(withTools.includes('пока этого не умеешь'));
+  // Clicking, typing, scrolling and navigating are Agent mode: the model points there instead of "I can't".
+  assert.ok(withTools.includes('режим «Агент»'));
+  assert.ok(!withTools.includes('пока не умеешь'));
   assert.ok(withTools.includes('snapshot'));
   assert.ok(withTools.includes('Не показывай пользователю метки'));
   const without = systemPrompt(assistant, []);
@@ -77,7 +79,7 @@ test('buildAgentTools: done возвращает итог, click идёт в т�
 
 test('agentSystemPrompt: правила работы, шаги пользователя, маркеры, роль', () => {
   const text = agentSystemPrompt(qa, ['click', 'done', 'ask_user']);
-  for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки', 'расширение само спросит']) assert.ok(text.includes(piece), piece);
+  for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки', 'расширение само спросит', 'подгружают содержимое только при прокрутке']) assert.ok(text.includes(piece), piece);
 });
 
 test('QA-инструменты: в агенте все три, в чате console_log без reload', () => {
