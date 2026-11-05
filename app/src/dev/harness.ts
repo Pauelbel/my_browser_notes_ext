@@ -33,6 +33,10 @@ const layer = {
   debug: {
     actionable: async (tabId: number, ref: string) => (await toolsFor(tabId, 26214)).debugActionable(ref),
   },
+  async emulateDpr(tabId: number, dpr: number) {
+    const tools = await toolsFor(tabId, 26214);
+    await tools.session.cdp.send('Emulation.setDeviceMetricsOverride', {width: 0, height: 0, deviceScaleFactor: dpr, mobile: false});
+  },
   async navigate(tabId: number, url: string) { await chrome.tabs.update(tabId, {url}); },
   async evalInTab(tabId: number, expression: string) {
     const tools = await toolsFor(tabId, 26214);

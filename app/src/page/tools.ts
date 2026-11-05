@@ -15,7 +15,7 @@ import {render, renderLine} from './render.ts';
 import {waitForReady} from './readiness.ts';
 import {probeEval} from './probe.ts';
 import {Diagnostics, summarizeConsole, summarizeNetwork} from './diagnostics.ts';
-import {findOverlaps, findUnnamed} from './checks.ts';
+import {DANGEROUS_URL, findOverlaps, findUnnamed, shortUrl} from './checks.ts';
 import type {Box} from './layout.ts';
 import type {ONode} from './outline.ts';
 import {classify, USER_STEP, type Category} from './classify.ts';
@@ -98,7 +98,7 @@ export class PageTools {
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
-    this.diagnostics = new Diagnostics(session.cdp);
+    this.diagnostics = session.diagnostics;
     session.cdp.on((method, _params, sessionId) => { if (method === 'Page.loadEventFired' && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300); });
     session.cdp.on(method => { if (method === 'Page.javascriptDialogClosed') this.dialog = undefined; });
     session.cdp.on((method, params) => { if (method === 'Page.javascriptDialogOpening') this.dialog = {type: params.type, message: params.message}; });
@@ -418,11 +418,13 @@ export class PageTools {
     const result = await this.run(async () => {
       const m = await this.session.cdp.send<{cssLayoutViewport: {pageX: number; pageY: number; clientWidth: number; clientHeight: number}}>('Page.getLayoutMetrics');
       const v = m.cssLayoutViewport;
-      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth));
+      // The image comes out at clip × scale × devicePixelRatio: the scale accounts for HiDPI screens.
+      const dpr = await probeEval<number>(this.session, this.session.frames.main().frameId, this.observer.probes, 'devicePixelRatio').catch(() => 1) || 1;
+      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth * dpr));
       const {data} = await this.session.cdp.send<{data: string}>('Page.captureScreenshot',
         {format: 'jpeg', quality: 70, clip: {x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale}}, undefined, 20000);
       image = data;
-      return `скриншот сделан: ${Math.round(v.clientWidth * scale)}×${Math.round(v.clientHeight * scale)}, приложен к следующему сообщению`;
+      return `скриншот сделан: ${Math.round(v.clientWidth * scale * dpr)}×${Math.round(v.clientHeight * scale * dpr)}, приложен к следующему сообщению`;
     });
     return image ? {...result, image} : result;
   }
@@ -432,33 +434,50 @@ export class PageTools {
     return this.run(async () => {
       const main = this.session.frames.main().frameId;
       const probe = <T>(expr: string, timeout?: number) => probeEval<T>(this.session, main, this.observer.probes, expr, timeout);
+      const section = async <T>(title: string, fn: () => Promise<T>, show: (v: T) => string): Promise<string> => {
+        try { return show(await fn()); } catch (error) { return `${title}: не удалось проверить (${error instanceof Error ? error.message : String(error)})`; }
+      };
       const {roots} = await this.observer.observe();
-      const [broken, noAlt, overflow, controls, links] = await Promise.all([
-        probe<{src: string; alt: string}[]>('__assistant.brokenImages()'),
-        probe<string[]>('__assistant.imagesWithoutAlt()'),
-        probe<{pageOverflow: number; width: number; elements: {text: string; right: number}[]}>('__assistant.overflow()'),
-        probe<{label: string; box: Box}[]>('__assistant.controls()'),
-        probe<string[]>(`__assistant.sameSiteLinks(${LINKS_MAX})`),
+      const linksSection = section('Ссылки этого сайта', async () => {
+        // Links that say they change something are never requested: a HEAD to /logout logs many sites out.
+        const candidates = await probe<{url: string; text: string; nearby: string}[]>(`__assistant.sameSiteLinks(${LINKS_MAX * 3})`);
+        const dangerous = candidates.filter(c => DANGEROUS_URL.test(c.url) || ['logout', 'delete', 'access', 'pay', 'send', 'captcha'].includes(classify({
+          action: 'activate', role: 'link', name: c.text, tag: 'a', type: '', inForm: false, formHasPassword: false, secretField: false, nearbyText: ''}) ?? ''));
+        const safe = candidates.filter(c => !dangerous.includes(c)).slice(0, LINKS_MAX);
+        this.diagnostics.mute(safe.map(c => c.url));
+        try {
+          const r = safe.length ? await probe<{bad: {url: string; status?: number; error?: string}[]; skipped: {url: string; why: string}[]}>(
+            `__assistant.checkLinks(${JSON.stringify(safe.map(c => c.url))}, 6, 5000, 20000)`, 30000) : {bad: [], skipped: []};
+          return {r, safe: safe.length, dangerous};
+        } finally {
+          this.diagnostics.unmute();
+        }
+      }, ({r, safe, dangerous}) => [
+        r.bad.length ? `Ссылки этого сайта с ошибкой: ${r.bad.length} из ${safe} проверенных\n${r.bad.map(b => `- ${b.status ?? b.error} · ${shortUrl(b.url)}`).join('\n')}`
+          : `Ссылки этого сайта: проверено ${safe}${safe >= LINKS_MAX ? ' (первые)' : ''}, ошибок нет`,
+        r.skipped.length ? `Не проверены: ${r.skipped.length} (${[...new Set(r.skipped.map(s => s.why))].join(', ')})` : '',
+        dangerous.length ? `Не проверялись (опасные — выход, удаление, отписка и т. п.): ${dangerous.slice(0, 10).map(d => `«${d.text || shortUrl(d.url)}»`).join(', ')}${dangerous.length > 10 ? ` и ещё ${dangerous.length - 10}` : ''}` : '',
+      ].filter(Boolean).join('\n'));
+      const parts = await Promise.all([
+        section('Битые картинки', () => probe<{src: string; alt: string}[]>('__assistant.brokenImages()'),
+          broken => (broken.length ? `Битые картинки: ${broken.length}\n${broken.map(b => `- ${shortUrl(b.src)}${b.alt ? ` (alt «${b.alt}»)` : ''}`).join('\n')}` : 'Битые картинки: нет')),
+        linksSection,
+        section('Элементы без подписи', async () => findUnnamed(roots), unnamed => (unnamed.length
+          ? `Элементы без подписи (не прочитает экранный диктор и не поймёт модель): ${unnamed.length}\n${unnamed.slice(0, 20).map(n => { if (n.backendNodeId !== undefined) this.refs.assign(n); return `- ${renderLine(n)}`; }).join('\n')}`
+          : 'Элементы без подписи: нет')),
+        section('Картинки без alt', () => probe<string[]>('__assistant.imagesWithoutAlt()'),
+          noAlt => (noAlt.length ? `Картинки без alt: ${noAlt.length}\n${noAlt.map(s => `- ${shortUrl(s)}`).join('\n')}` : 'Картинки без alt: нет')),
+        section('Переполнение по ширине', () => probe<{pageOverflow: number; width: number; elements: {text: string; right: number}[]}>('__assistant.overflow()'),
+          o => (o.pageOverflow > 1 ? `Переполнение по ширине: страница шире окна (${o.width} px) на ${o.pageOverflow} px\n${o.elements.map(e => `- «${e.text}» до ${e.right} px`).join('\n')}` : 'Переполнение по ширине: нет')),
+        section('Перекрывающиеся элементы', () => probe<{label: string; box: Box; ancestors: string[]}[]>('__assistant.controls()'), controls => {
+          const overlaps = findOverlaps(controls.map((c, i) => ({ref: String(i), label: c.label, box: c.box, ancestors: c.ancestors})));
+          return overlaps.length ? `Перекрывающиеся элементы: ${overlaps.length}\n${overlaps.map(([a, b]) => `- «${controls[Number(a)].label}» и «${controls[Number(b)].label}»`).join('\n')}` : 'Перекрывающиеся элементы: нет';
+        }),
       ]);
-      const badLinks = links.length ? await probe<{url: string; status?: number; error?: string}[]>(`__assistant.checkLinks(${JSON.stringify(links)}, 6, 5000)`, 60000) : [];
-      const unnamed = findUnnamed(roots);
-      const overlaps = findOverlaps(controls.map((c, i) => ({ref: String(i), label: c.label, box: c.box})));
-      const lines: string[] = [];
-      lines.push(broken.length ? `Битые картинки: ${broken.length}\n${broken.map(b => `- ${b.src}${b.alt ? ` (alt «${b.alt}»)` : ''}`).join('\n')}` : 'Битые картинки: нет');
-      lines.push(badLinks.length
-        ? `Ссылки этого сайта с ошибкой: ${badLinks.length} из ${links.length} проверенных\n${badLinks.map(b => `- ${b.status ?? b.error} · ${b.url}`).join('\n')}`
-        : `Ссылки этого сайта: проверено ${links.length}${links.length >= LINKS_MAX ? ' (первые)' : ''}, ошибок нет`);
-      lines.push(unnamed.length
-        ? `Элементы без подписи (не прочитает экранный диктор и не поймёт модель): ${unnamed.length}\n${unnamed.slice(0, 20).map(n => { if (n.backendNodeId !== undefined) this.refs.assign(n); return `- ${renderLine(n)}`; }).join('\n')}`
-        : 'Элементы без подписи: нет');
-      lines.push(noAlt.length ? `Картинки без alt: ${noAlt.length}\n${noAlt.map(s => `- ${s}`).join('\n')}` : 'Картинки без alt: нет');
-      lines.push(overflow.pageOverflow > 1 || overflow.elements.length
-        ? `Переполнение по ширине: страница шире окна (${overflow.width} px) на ${Math.max(0, overflow.pageOverflow)} px\n${overflow.elements.map(e => `- «${e.text}» до ${e.right} px`).join('\n')}`
-        : 'Переполнение по ширине: нет');
-      lines.push(overlaps.length
-        ? `Перекрывающиеся элементы: ${overlaps.length}\n${overlaps.map(([a, b]) => `- «${controls[Number(a)].label}» и «${controls[Number(b)].label}»`).join('\n')}`
-        : 'Перекрывающиеся элементы: нет');
-      return {head: `Проверки страницы · ${this.session.frames.main().url}`, body: lines.join('\n\n'), notices: []};
+      let body = parts.join('\n\n');
+      const notices: string[] = [];
+      if (body.length > this.budget) { body = body.slice(0, this.budget); notices.push('Отчёт урезан до бюджета описания.'); }
+      return {head: `Проверки страницы · ${this.session.frames.main().url}`, body, notices};
     });
   }
 
@@ -559,6 +578,5 @@ export class PageTools {
 
   dispose(): void {
     this.observer.network.stop();
-    this.diagnostics.stop();
   }
 }

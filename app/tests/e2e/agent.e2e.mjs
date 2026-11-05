@@ -44,35 +44,52 @@ export default async function ({openPage, base, server, sleep, log}) {
     return {tab, answer, steps, error};
   }
 
-  const one = await task('highlight.html', 'Выдели на странице все слова «настройки» жёлтым цветом.');
-  must(one.steps.some(s => s.includes('highlight')), 'не было шага highlight');
-  must(await inTab(one.tab, `[...CSS.highlights.keys()].some(k => k.startsWith('assistant-'))`), 'на странице нет подсветки');
+  // A real model answers differently from run to run: each scenario gets one more attempt, and the log says which one passed.
+  async function scenario(name, fn) {
+    for (let attempt = 1; ; attempt++) {
+      try { await fn(); log(`✓ ${name}${attempt > 1 ? ` (со второй попытки)` : ''}`); return; }
+      catch (error) { if (attempt >= 2) throw error; log(`… ${name}: ${error.message} — повтор`); }
+    }
+  }
+  await scenario('подсветка', async () => {
+    const one = await task('highlight.html', 'Выдели на странице все слова «настройки» жёлтым цветом.');
+    must(one.steps.some(s => s.includes('highlight')), 'не было шага highlight');
+    must(await inTab(one.tab, `[...CSS.highlights.keys()].some(k => k.startsWith('assistant-'))`), 'на странице нет подсветки');
+  });
 
-  const two = await task('basic.html', 'Нажми кнопку «Изменить статус» и скажи, что изменилось на странице.');
-  must(two.steps.some(s => s.includes('click')), 'не было шага click');
-  must(await inTab(two.tab, `document.getElementById('status').textContent`) === 'Кнопка нажата', 'статус не изменился');
-  must(two.answer.includes('Кнопка нажата'), `в ответе нет нового статуса: ${two.answer}`);
+  await scenario('клик', async () => {
+    const two = await task('basic.html', 'Нажми кнопку «Изменить статус» и скажи, что изменилось на странице.');
+    must(two.steps.some(s => s.includes('click')), 'не было шага click');
+    must(await inTab(two.tab, `document.getElementById('status').textContent`) === 'Кнопка нажата', 'статус не изменился');
+    must(two.answer.includes('Кнопка нажата'), `в ответе нет нового статуса: ${two.answer}`);
+  });
 
-  let asked = '';
-  const three = await task('danger.html', 'Удали черновик на этой странице.', {permission: 'ask', onPrompt: async text => {
-    asked = text;
-    await chat.eval(`[...document.querySelectorAll('.prompt-card button')].find(b => b.textContent === 'Отклонить')?.click()`);
-  }});
-  must(asked.includes('удаление'), `не было вопроса об удалении: ${asked}`);
-  must(await inTab(three.tab, `document.getElementById('status').textContent`) === 'Статус: ждём', 'удалил без разрешения');
-  const threeAllowed = await task('danger.html', 'Удали черновик на этой странице.', {permission: 'ask', onPrompt: async () => {
-    await chat.eval(`[...document.querySelectorAll('.prompt-card button')].find(b => b.textContent === 'Разрешить')?.click()`);
-  }});
-  must(await inTab(threeAllowed.tab, `document.getElementById('status').textContent`) === 'Удалить черновик', 'не удалил после разрешения');
+  await scenario('удаление: отказ и разрешение', async () => {
+    let asked = '';
+    const three = await task('danger.html', 'Удали черновик на этой странице.', {permission: 'ask', onPrompt: async text => {
+      asked = text;
+      await chat.eval(`[...document.querySelectorAll('.prompt-card button')].find(b => b.textContent === 'Отклонить')?.click()`);
+    }});
+    must(asked.includes('удаление'), `не было вопроса об удалении: ${asked}`);
+    must(await inTab(three.tab, `document.getElementById('status').textContent`) === 'Статус: ждём', 'удалил без разрешения');
+    const threeAllowed = await task('danger.html', 'Удали черновик на этой странице.', {permission: 'ask', onPrompt: async () => {
+      await chat.eval(`[...document.querySelectorAll('.prompt-card button')].find(b => b.textContent === 'Разрешить')?.click()`);
+    }});
+    must(await inTab(threeAllowed.tab, `document.getElementById('status').textContent`) === 'Удалить черновик', 'не удалил после разрешения');
+  });
 
-  const four = await task('basic.html', 'Перейди по ссылке на вторую страницу и скажи, какой там заголовок.');
-  must(four.steps.some(s => /click|navigate/.test(s)), 'не было перехода');
-  must(four.answer.includes('Вторая страница'), `в ответе нет заголовка: ${four.answer}`);
+  await scenario('переход', async () => {
+    const four = await task('basic.html', 'Перейди по ссылке на вторую страницу и скажи, какой там заголовок.');
+    must(four.steps.some(s => /click|navigate/.test(s)), 'не было перехода');
+    must(four.answer.includes('Вторая страница'), `в ответе нет заголовка: ${four.answer}`);
+  });
 
-  const five = await task('qa.html', 'Найди баги на этой странице.', {profile: 'qa'});
-  const qaSteps = five.steps.filter(s => /console_log|network_log|page_checks|screenshot/.test(s));
-  must(qaSteps.length >= 2, `мало QA-шагов: ${five.steps.join(' | ')}`);
-  must(/консол|console|Не удалось загрузить настройки/i.test(five.answer), 'в ответе нет ошибки консоли');
-  must(/404/.test(five.answer), 'в ответе нет 404');
-  must(/картинк|изображен|image|nope\.png/i.test(five.answer), 'в ответе нет битой картинки');
+  await scenario('поиск багов', async () => {
+    const five = await task('qa.html', 'Найди баги на этой странице.', {profile: 'qa'});
+    const qaSteps = five.steps.filter(s => /console_log|network_log|page_checks|screenshot/.test(s));
+    must(qaSteps.length >= 2, `мало QA-шагов: ${five.steps.join(' | ')}`);
+    must(/консол|console|Не удалось загрузить настройки/i.test(five.answer), 'в ответе нет ошибки консоли');
+    must(/404/.test(five.answer), 'в ответе нет 404');
+    must(/картинк|изображен|image|nope\.png/i.test(five.answer), 'в ответе нет битой картинки');
+  });
 }

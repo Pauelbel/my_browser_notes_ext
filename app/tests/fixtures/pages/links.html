@@ -1,0 +1,6 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"><title>Много ссылок</title></head><body>
+<h1>Много ссылок</h1>
+<nav><a href="/logout">Выйти</a> · <a href="/account/delete?id=1">Удалить аккаунт</a> · <a href="/unsubscribe?token=x">Отписаться</a> · <a href="/redirect-out">Партнёр</a> · <a href="/slow?ms=9000">Медленная</a> · <a href="https://example.com/">Внешний сайт</a></nav>
+<ul id="list"></ul>
+<script>const ul = document.getElementById('list'); for (let i = 1; i <= 100; i++) { const li = document.createElement('li'); li.innerHTML = '<a href="basic.html?p=' + i + '">Страница ' + i + '</a>'; ul.append(li); }</script>
+</body></html>

@@ -8,8 +8,13 @@ import {fileURLToPath} from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'pages');
 const TYPES = {'.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png'};
 
+/** Every path requested, so scenarios can check what was (not) called. */
+export const requested = [];
+
 function handler(request, response) {
   const url = new URL(request.url, 'http://x');
+  requested.push(`${request.method} ${url.pathname}`);
+  if (url.pathname === '/redirect-out') { response.writeHead(302, {location: 'https://example.com/partner'}); response.end(); return; }
   if (url.pathname === '/missing') { response.writeHead(404, {'content-type': 'text/html; charset=utf-8'}); response.end('<h1>Нет такой страницы</h1>'); return; }
   if (url.pathname === '/nocontent') { response.writeHead(204); response.end(); return; }
   if (url.pathname === '/slow') {
@@ -35,6 +40,7 @@ export async function startServer() {
   return {
     origin: `http://localhost:${a.address().port}`,
     crossOrigin: `http://127.0.0.1:${b.address().port}`,
+    requested,
     close: () => { a.close(); b.close(); },
   };
 }

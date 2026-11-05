@@ -1,6 +1,7 @@
 // One debugger attachment per tab, shared by everyone working on it during a reply, detached when the last one is done.
 import {attachTab, type AttachedCdp} from './cdp.ts';
 import {Frames} from './frames.ts';
+import {Diagnostics} from './diagnostics.ts';
 
 export interface PageSession {
   readonly tabId: number;
@@ -8,6 +9,8 @@ export interface PageSession {
   readonly frames: Frames;
   /** The prefix of this session's element labels, so a label from an earlier session is never taken for a new one. */
   readonly epoch: string;
+  /** Console and network collector, subscribed before the domains are enabled so Chrome's replay is caught. */
+  readonly diagnostics: Diagnostics;
 }
 
 /** Persisted epochs as lowercase letters: 0 → a, 25 → z, 26 → ba. */
@@ -45,8 +48,9 @@ export function createSessionManager(deps: {debuggerApi?: typeof chrome.debugger
     // A detach by the user or by Chrome ends this session; the next acquire attaches afresh.
     cdp.onDetach(() => { if (entries.get(tabId) === mine) entries.delete(tabId); });
     try {
+      const diagnostics = new Diagnostics(cdp);
       const [frames, epoch] = await Promise.all([Frames.start(cdp), nextEpoch()]);
-      return {tabId, cdp, frames, epoch};
+      return {tabId, cdp, frames, epoch, diagnostics};
     } catch (error) {
       await cdp.detach();
       throw error;

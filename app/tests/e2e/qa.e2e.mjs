@@ -6,8 +6,11 @@ export default async function ({openPage, base, server, log}) {
   const call = (method, args = {}) => dev.eval(`layer.call(${tab}, ${JSON.stringify(method)}, ${JSON.stringify(args)})`);
   const must = (cond, message) => { if (!cond) throw new Error(message); };
 
+  await new Promise(r => setTimeout(r, 1000));
   const before = await call('consoleLog');
   must(before.text.includes('reload: true'), `нет пояснения про момент сбора: ${before.text}`);
+  // Errors from before attaching come from Chrome's replay of stored messages.
+  must(/Не удалось загрузить настройки/.test(before.text) && /до подключения/.test(before.text), `нет сообщений до подключения: ${before.text}`);
   const consoleLog = await call('consoleLog', {reload: true});
   log(consoleLog.text.split('\n').slice(2, 6).join(' | '));
   must(/×3 · Не удалось загрузить настройки/.test(consoleLog.text), `консоль: ${consoleLog.text}`);
@@ -32,4 +35,15 @@ export default async function ({openPage, base, server, log}) {
   const shot = await dev.eval(`layer.call(${tab}, 'screenshot').then(r => ({ok: r.ok, text: r.text, size: r.image ? r.image.length : 0, jpeg: r.image ? r.image.startsWith('/9j/') : false}))`);
   log(`скриншот: ${shot.text.replace(/<<<[^>]*>>>|\n/g, ' ').trim()}, ${shot.size} символов base64`);
   must(shot.ok && shot.jpeg && /\d+×\d+/.test(shot.text) && Number(shot.text.match(/(\d+)×/)[1]) <= 1280, `скриншот: ${JSON.stringify(shot)}`);
+
+  // On a HiDPI screen (devicePixelRatio 2) the image itself must still be at most 1280 px wide.
+  await dev.eval(`layer.emulateDpr(${tab}, 2)`);
+  const hidpi = await dev.eval(`layer.call(${tab}, 'screenshot').then(r => r.image || '')`);
+  const jpeg = Buffer.from(hidpi, 'base64');
+  let width = 0;
+  for (let i = 2; i < jpeg.length - 9; i++) {
+    if (jpeg[i] === 0xFF && (jpeg[i + 1] === 0xC0 || jpeg[i + 1] === 0xC2)) { width = jpeg.readUInt16BE(i + 7); break; }
+  }
+  log(`скриншот при DPR 2: ширина ${width} px`);
+  must(width > 0 && width <= 1280, `ширина JPEG при DPR 2: ${width}`);
 }

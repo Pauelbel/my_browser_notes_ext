@@ -208,13 +208,16 @@ var DEFAULT_PROFILES = [
   {
     id: "qa",
     name: "QA-\u0442\u0435\u0441\u0442\u0438\u0440\u043E\u0432\u0449\u0438\u043A",
-    prompt: "\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u0420\u0430\u0431\u043E\u0442\u0430\u0439 \u043F\u043E \u043F\u043E\u0440\u044F\u0434\u043A\u0443:\n1. \u041F\u043E\u0441\u043C\u043E\u0442\u0440\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 (snapshot) \u0438 \u0441\u043E\u0431\u0435\u0440\u0438 \u0444\u0430\u043A\u0442\u044B: console_log, network_log \u0438 page_checks (\u0441 reload: true, \u0435\u0441\u043B\u0438 \u043D\u0443\u0436\u043D\u0430 \u043A\u0430\u0440\u0442\u0438\u043D\u0430 \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438).\n2. \u0415\u0441\u043B\u0438 \u043C\u043E\u0434\u0435\u043B\u044C \u0432\u0438\u0434\u0438\u0442 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u2014 \u0441\u0434\u0435\u043B\u0430\u0439 screenshot \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u044C \u0432\u0451\u0440\u0441\u0442\u043A\u0443 \u0433\u043B\u0430\u0437\u0430\u043C\u0438: \u043D\u0430\u043B\u043E\u0436\u0435\u043D\u0438\u044F, \u043E\u0431\u0440\u0435\u0437\u0430\u043D\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442, \u043F\u0443\u0441\u0442\u044B\u0435 \u043C\u0435\u0441\u0442\u0430.\n3. \u041F\u0440\u043E\u0439\u0434\u0438 \u043F\u043E \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C \u0440\u0430\u0437\u0434\u0435\u043B\u0430\u043C \u0441\u0430\u0439\u0442\u0430 (\u0441\u0441\u044B\u043B\u043A\u0438 \u043C\u0435\u043D\u044E) \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043D\u0430 \u043A\u0430\u0436\u0434\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435.\n4. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0436\u0438: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442, \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E (\u0441\u0442\u0440\u043E\u043A\u0430 \u0438\u0437 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430).\n\u041F\u0438\u0448\u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u043E, \u0447\u0442\u043E \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430\u043C\u0438; \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043E\u0442\u043C\u0435\u0447\u0430\u0439 \u043A\u0430\u043A \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F. \u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0439 \u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u0439 \u0440\u0430\u0434\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438.",
+    prompt: "\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u0420\u0430\u0431\u043E\u0442\u0430\u0439 \u043F\u043E \u043F\u043E\u0440\u044F\u0434\u043A\u0443:\n1. \u041F\u043E\u0441\u043C\u043E\u0442\u0440\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 (snapshot) \u0438 \u0441\u043E\u0431\u0435\u0440\u0438 \u0444\u0430\u043A\u0442\u044B: console_log, network_log \u0438 page_checks (\u0441 reload: true, \u0435\u0441\u043B\u0438 \u043D\u0443\u0436\u043D\u0430 \u043A\u0430\u0440\u0442\u0438\u043D\u0430 \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438).\n2. \u0415\u0441\u043B\u0438 \u043C\u043E\u0434\u0435\u043B\u044C \u0432\u0438\u0434\u0438\u0442 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u2014 \u0441\u0434\u0435\u043B\u0430\u0439 screenshot \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u044C \u0432\u0451\u0440\u0441\u0442\u043A\u0443 \u0433\u043B\u0430\u0437\u0430\u043C\u0438: \u043D\u0430\u043B\u043E\u0436\u0435\u043D\u0438\u044F, \u043E\u0431\u0440\u0435\u0437\u0430\u043D\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442, \u043F\u0443\u0441\u0442\u044B\u0435 \u043C\u0435\u0441\u0442\u0430.\n3. \u041F\u0440\u043E\u0439\u0434\u0438 \u043F\u043E \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C \u0440\u0430\u0437\u0434\u0435\u043B\u0430\u043C \u0441\u0430\u0439\u0442\u0430 (\u0441\u0441\u044B\u043B\u043A\u0438 \u043C\u0435\u043D\u044E) \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043D\u0430 \u043A\u0430\u0436\u0434\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435.\n4. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0436\u0438: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442, \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E (\u0441\u0442\u0440\u043E\u043A\u0430 \u0438\u0437 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430).\n5. \u0412 \u0438\u0442\u043E\u0433\u043E\u0432\u043E\u043C \u043E\u0442\u0447\u0451\u0442\u0435 \u043F\u0435\u0440\u0435\u0447\u0438\u0441\u043B\u0438 \u0432\u0441\u0435 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u043A\u0430\u0437\u0430\u043B\u0438 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u044B \u2014 \u043E\u0448\u0438\u0431\u043A\u0438 \u043A\u043E\u043D\u0441\u043E\u043B\u0438, \u0443\u043F\u0430\u0432\u0448\u0438\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B, \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0438\u0437 page_checks \u0438 \u0441\u043E \u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442\u0430, \u2014 \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044F.\n\u041F\u0438\u0448\u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u043E, \u0447\u0442\u043E \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430\u043C\u0438; \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043E\u0442\u043C\u0435\u0447\u0430\u0439 \u043A\u0430\u043A \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F. \u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0439 \u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u0439 \u0440\u0430\u0434\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438.",
     tools: toolsOf("read", "act", "qa"),
     createdAt: 1
   }
 ];
 var LEGACY_PROMPTS = {
-  qa: ["\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u041E\u0431\u0445\u043E\u0434\u0438 \u0440\u0430\u0437\u0434\u0435\u043B\u044B \u0441\u0430\u0439\u0442\u0430, \u0441\u043E\u0431\u0438\u0440\u0430\u0439 \u043E\u0448\u0438\u0431\u043A\u0438 \u043A\u043E\u043D\u0441\u043E\u043B\u0438 \u0438 \u0443\u043F\u0430\u0432\u0448\u0438\u0435 \u0441\u0435\u0442\u0435\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B, \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u043D\u0430 \u0431\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0438 \u0441\u0441\u044B\u043B\u043A\u0438, \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0435\u0439 \u0438 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432\u0451\u0440\u0441\u0442\u043A\u0438. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442. \u041E\u0442\u0434\u0435\u043B\u044F\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B \u043E\u0442 \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u0439."]
+  qa: [
+    "\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u0420\u0430\u0431\u043E\u0442\u0430\u0439 \u043F\u043E \u043F\u043E\u0440\u044F\u0434\u043A\u0443:\n1. \u041F\u043E\u0441\u043C\u043E\u0442\u0440\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 (snapshot) \u0438 \u0441\u043E\u0431\u0435\u0440\u0438 \u0444\u0430\u043A\u0442\u044B: console_log, network_log \u0438 page_checks (\u0441 reload: true, \u0435\u0441\u043B\u0438 \u043D\u0443\u0436\u043D\u0430 \u043A\u0430\u0440\u0442\u0438\u043D\u0430 \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438).\n2. \u0415\u0441\u043B\u0438 \u043C\u043E\u0434\u0435\u043B\u044C \u0432\u0438\u0434\u0438\u0442 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u2014 \u0441\u0434\u0435\u043B\u0430\u0439 screenshot \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u044C \u0432\u0451\u0440\u0441\u0442\u043A\u0443 \u0433\u043B\u0430\u0437\u0430\u043C\u0438: \u043D\u0430\u043B\u043E\u0436\u0435\u043D\u0438\u044F, \u043E\u0431\u0440\u0435\u0437\u0430\u043D\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442, \u043F\u0443\u0441\u0442\u044B\u0435 \u043C\u0435\u0441\u0442\u0430.\n3. \u041F\u0440\u043E\u0439\u0434\u0438 \u043F\u043E \u043E\u0441\u043D\u043E\u0432\u043D\u044B\u043C \u0440\u0430\u0437\u0434\u0435\u043B\u0430\u043C \u0441\u0430\u0439\u0442\u0430 (\u0441\u0441\u044B\u043B\u043A\u0438 \u043C\u0435\u043D\u044E) \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043D\u0430 \u043A\u0430\u0436\u0434\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435.\n4. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0436\u0438: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442, \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E (\u0441\u0442\u0440\u043E\u043A\u0430 \u0438\u0437 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430).\n\u041F\u0438\u0448\u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u043E, \u0447\u0442\u043E \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430\u043C\u0438; \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043E\u0442\u043C\u0435\u0447\u0430\u0439 \u043A\u0430\u043A \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u044F. \u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0439 \u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u0439 \u0440\u0430\u0434\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438.",
+    "\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u041E\u0431\u0445\u043E\u0434\u0438 \u0440\u0430\u0437\u0434\u0435\u043B\u044B \u0441\u0430\u0439\u0442\u0430, \u0441\u043E\u0431\u0438\u0440\u0430\u0439 \u043E\u0448\u0438\u0431\u043A\u0438 \u043A\u043E\u043D\u0441\u043E\u043B\u0438 \u0438 \u0443\u043F\u0430\u0432\u0448\u0438\u0435 \u0441\u0435\u0442\u0435\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B, \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u043D\u0430 \u0431\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0438 \u0441\u0441\u044B\u043B\u043A\u0438, \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0435\u0439 \u0438 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432\u0451\u0440\u0441\u0442\u043A\u0438. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442. \u041E\u0442\u0434\u0435\u043B\u044F\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B \u043E\u0442 \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u0439."
+  ]
 };
 
 // src/store/assistant-db.ts
@@ -37959,6 +37962,176 @@ var Frames = class _Frames {
   }
 };
 
+// src/page/diagnostics.ts
+var GROUPS_MAX = 30;
+var TEXT_MAX = 300;
+var URL_MAX = 500;
+var REQUESTS_MAX = 1e3;
+var MUTE_TAIL_MS = 1500;
+function argText(arg) {
+  if (arg.value !== void 0) return typeof arg.value === "string" ? arg.value : JSON.stringify(arg.value);
+  return arg.description ?? arg.type ?? "";
+}
+var Diagnostics = class {
+  since = Date.now();
+  #since = this.since;
+  #limit;
+  #console = [];
+  #network = [];
+  #droppedConsole = 0;
+  #droppedNetwork = 0;
+  #requests = /* @__PURE__ */ new Map();
+  #page = "";
+  #muted = /* @__PURE__ */ new Set();
+  #mutedUntil = 0;
+  #off;
+  constructor(cdp, limit = 300) {
+    this.#limit = limit;
+    this.#off = cdp.on((method, params, sessionId) => this.#event(method, params, sessionId));
+  }
+  get collectedSince() {
+    return this.#since;
+  }
+  console() {
+    return { entries: [...this.#console], dropped: this.#droppedConsole };
+  }
+  network() {
+    return { entries: [...this.#network], dropped: this.#droppedNetwork };
+  }
+  reset() {
+    this.#console = [];
+    this.#network = [];
+    this.#droppedConsole = 0;
+    this.#droppedNetwork = 0;
+    this.#since = Date.now();
+  }
+  stop() {
+    this.#off();
+  }
+  /** Requests of the layer's own checks are not the page's: HEAD requests and these addresses are left out. */
+  mute(urls) {
+    this.#muted = new Set(urls);
+    this.#mutedUntil = Infinity;
+  }
+  /** Ends muting a moment later: the last responses of a check arrive after it returns. */
+  unmute() {
+    this.#mutedUntil = Date.now() + MUTE_TAIL_MS;
+  }
+  pendingRequests() {
+    return this.#requests.size;
+  }
+  #isMuted(url2, method) {
+    return Date.now() < this.#mutedUntil && (method === "HEAD" || this.#muted.has(url2.split("#")[0]));
+  }
+  #pushConsole(entry) {
+    entry.text = entry.text.slice(0, TEXT_MAX);
+    if (entry.url) entry.url = entry.url.slice(0, URL_MAX);
+    entry.page = this.#page || void 0;
+    this.#console.push(entry);
+    if (this.#console.length > this.#limit) {
+      this.#console.shift();
+      this.#droppedConsole++;
+    }
+  }
+  #pushNetwork(entry) {
+    entry.url = entry.url.slice(0, URL_MAX);
+    entry.page = this.#page || void 0;
+    this.#network.push(entry);
+    if (this.#network.length > this.#limit) {
+      this.#network.shift();
+      this.#droppedNetwork++;
+    }
+  }
+  #event(method, params, sessionId) {
+    const at = Date.now();
+    const before = typeof params?.timestamp === "number" && params.timestamp < this.since - 100;
+    if (method === "Page.frameNavigated" && !sessionId && !params.frame?.parentId) {
+      this.#page = params.frame?.url ?? "";
+      return;
+    }
+    if (method === "Runtime.consoleAPICalled") {
+      const level = params.type === "error" || params.type === "assert" ? "error" : params.type === "warning" ? "warning" : null;
+      if (!level) return;
+      const frame = params.stackTrace?.callFrames?.[0];
+      this.#pushConsole({ level, source: "console", text: (params.args ?? []).map(argText).join(" ").trim(), url: frame?.url, line: frame ? frame.lineNumber + 1 : void 0, at, before });
+    } else if (method === "Runtime.exceptionThrown") {
+      const d = params.exceptionDetails ?? {};
+      this.#pushConsole({ level: "error", source: "exception", text: (d.exception?.description ?? d.text ?? "").split("\n")[0], url: d.url, line: d.lineNumber !== void 0 ? d.lineNumber + 1 : void 0, at, before });
+    } else if (method === "Log.entryAdded") {
+      const e = params.entry ?? {};
+      if (e.level !== "error" && e.level !== "warning") return;
+      if (e.url && this.#isMuted(e.url)) return;
+      this.#pushConsole({ level: e.level, source: "log", text: e.text ?? "", url: e.url, line: e.lineNumber !== void 0 ? e.lineNumber + 1 : void 0, at, before });
+    } else if (method === "Network.requestWillBeSent") {
+      const url2 = params.request?.url ?? "", reqMethod = params.request?.method ?? "GET";
+      this.#requests.set(`${sessionId ?? ""}|${params.requestId}`, { method: reqMethod, url: url2, type: params.type, muted: this.#isMuted(url2, reqMethod) });
+      while (this.#requests.size > REQUESTS_MAX) this.#requests.delete(this.#requests.keys().next().value);
+    } else if (method === "Network.loadingFinished") {
+      this.#requests.delete(`${sessionId ?? ""}|${params.requestId}`);
+    } else if (method === "Network.responseReceived") {
+      const key = `${sessionId ?? ""}|${params.requestId}`;
+      const status = params.response?.status ?? 0;
+      const req = this.#requests.get(key);
+      if (status < 400 || req?.muted) return;
+      this.#pushNetwork({ method: req?.method ?? "GET", url: params.response?.url ?? req?.url ?? "", status, type: params.type ?? req?.type, at });
+    } else if (method === "Network.loadingFailed") {
+      const key = `${sessionId ?? ""}|${params.requestId}`;
+      const req = this.#requests.get(key);
+      this.#requests.delete(key);
+      if (params.canceled || req?.muted) return;
+      const reason = params.corsErrorStatus?.corsError ? `CORS: ${params.corsErrorStatus.corsError}` : params.blockedReason ? `\u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D: ${params.blockedReason}` : params.errorText;
+      this.#pushNetwork({ method: req?.method ?? "GET", url: req?.url ?? "", error: reason, type: params.type ?? req?.type, at });
+    }
+  }
+};
+var clock = (t) => new Date(t).toTimeString().slice(0, 8);
+var footer = (since) => `\u0441\u0435\u0442\u044C \u0432\u0438\u0434\u043D\u0430 \u0441 ${clock(since)} (\u0441 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F \u043A \u0432\u043A\u043B\u0430\u0434\u043A\u0435); \u043A\u043E\u043D\u0441\u043E\u043B\u044C \u2014 \u0438 \u0434\u043E \u043D\u0435\u0433\u043E (Chrome \u0445\u0440\u0430\u043D\u0438\u0442 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044F). \u0427\u0442\u043E\u0431\u044B \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438, \u043D\u0443\u0436\u043D\u0430 \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: reload: true (\u0435\u0441\u0442\u044C \u0442\u043E\u043B\u044C\u043A\u043E \u0432 \u0440\u0435\u0436\u0438\u043C\u0435 \xAB\u0410\u0433\u0435\u043D\u0442\xBB).`;
+var cut = (s) => s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX - 1)}\u2026` : s;
+function grouped(items, key) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    const k = key(item);
+    const g = groups.get(k);
+    if (g) g.count++;
+    else groups.set(k, { item, count: 1 });
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
+}
+function summarizeConsole(d, level) {
+  const entries = d.entries.filter((e) => level === "all" || e.level === level);
+  const lines = [footer(d.since)];
+  if (!entries.length) {
+    lines.push(level === "warning" ? "\u041F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u0439 \u043D\u0435\u0442." : "\u041E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442.");
+    return lines.join("\n");
+  }
+  const pages = new Set(entries.map((e) => e.page ?? ""));
+  const groups = grouped(entries, (e) => `${e.level}|${e.text}|${pages.size > 1 ? e.page : ""}`);
+  lines.push(`\u0417\u0430\u043F\u0438\u0441\u0435\u0439: ${entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
+  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
+    const where = item.url ? ` \xB7 ${item.url}${item.line ? `:${item.line}` : ""}` : "";
+    lines.push(`${item.level === "error" ? "\u043E\u0448\u0438\u0431\u043A\u0430" : "\u043F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u0435"}${count > 1 ? ` \xD7${count}` : ""}${item.source === "exception" ? " (\u043D\u0435\u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u043D\u043D\u043E\u0435 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435)" : ""}${item.before ? " (\u0434\u043E \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F)" : ""} \xB7 ${cut(item.text)}${where}${item.page ? ` \xB7 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 ${item.page}` : ""}`);
+  }
+  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX} \u0440\u0430\u0437\u043D\u044B\u0445 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u0439.`);
+  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
+  return lines.join("\n");
+}
+function summarizeNetwork(d) {
+  const lines = [footer(d.since)];
+  if (!d.entries.length) {
+    lines.push("\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435\u0442.");
+    return lines.join("\n");
+  }
+  const base = (url2) => url2.split(/[?#]/)[0];
+  const groups = grouped(d.entries, (e) => `${e.method}|${e.status ?? e.error}|${base(e.url)}`);
+  lines.push(`\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432: ${d.entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
+  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
+    lines.push(`${item.method} ${item.status ?? item.error}${count > 1 ? ` \xD7${count}` : ""} \xB7 ${cut(base(item.url))}${item.type ? ` (${item.type.toLowerCase()})` : ""}${item.page ? ` \xB7 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 ${item.page}` : ""}`);
+  }
+  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX}.`);
+  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
+  return lines.join("\n");
+}
+
 // src/page/session.ts
 function epochLabel(n) {
   let out = "";
@@ -37991,8 +38164,9 @@ function createSessionManager(deps = {}) {
       if (entries.get(tabId) === mine) entries.delete(tabId);
     });
     try {
+      const diagnostics = new Diagnostics(cdp);
       const [frames, epoch] = await Promise.all([Frames.start(cdp), nextEpoch()]);
-      return { tabId, cdp, frames, epoch };
+      return { tabId, cdp, frames, epoch, diagnostics };
     } catch (error62) {
       await cdp.detach();
       throw error62;
@@ -38428,6 +38602,7 @@ function findOverlaps(items, limit = 10) {
   const pairs = [];
   for (let i = 0; i < items.length && pairs.length < limit; i++) {
     for (let j = i + 1; j < items.length && pairs.length < limit; j++) {
+      if (items[i].ancestors?.includes(items[j].ref) || items[j].ancestors?.includes(items[i].ref)) continue;
       const a = items[i].box, b = items[j].box;
       const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
       const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
@@ -38437,6 +38612,14 @@ function findOverlaps(items, limit = 10) {
     }
   }
   return pairs;
+}
+var DANGEROUS_URL = /(log-?out|sign-?out|exit|delete|remove|destroy|unsubscribe|отпис|выход|удал)/i;
+function shortUrl(url2) {
+  if (url2.startsWith("data:")) {
+    const type = url2.slice(5, url2.indexOf(";") > 0 ? url2.indexOf(";") : url2.indexOf(","));
+    return `data:${type}\u2026 (${Math.max(1, Math.round(url2.length * 0.75 / 1024))} \u041A\u0411)`;
+  }
+  return url2.length > 200 ? `${url2.slice(0, 199)}\u2026` : url2;
 }
 var CHECKS_SOURCE = `
   brokenImages() {
@@ -38448,50 +38631,68 @@ var CHECKS_SOURCE = `
   },
   overflow() {
     const width = document.documentElement.clientWidth;
+    const pageOverflow = document.documentElement.scrollWidth - width;
     const found = [];
-    for (const el of document.body ? document.body.querySelectorAll('*') : []) {
+    // Elements are listed only when the page itself is wider than the window; a clipped carousel slide is not a bug.
+    const clipped = el => { for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o !== 'visible') return true; } return false; };
+    if (pageOverflow > 1) for (const el of document.body ? document.body.querySelectorAll('*') : []) {
       if (found.length >= 10) break;
       const r = el.getBoundingClientRect();
-      if (r.right > width + 1 && r.width > 0 && !found.some(f => f.el.contains(el)) && getComputedStyle(el).position !== 'fixed') {
-        found.push({el, text: (el.innerText || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/\\\\s+/g, ' ').slice(0, 60), right: Math.round(r.right)});
+      if (r.right > width + 1 && r.width > 0 && !found.some(f => f.el.contains(el)) && getComputedStyle(el).position !== 'fixed' && !clipped(el)) {
+        found.push({el, text: (el.innerText || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/s+/g, ' ').slice(0, 60), right: Math.round(r.right)});
       }
     }
-    return {pageOverflow: document.documentElement.scrollWidth - width, width, elements: found.map(({text, right}) => ({text, right}))};
+    return {pageOverflow, width, elements: found.map(({text, right}) => ({text, right}))};
   },
   controls() {
     const sel = 'button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=link], [onclick]';
-    return [...document.querySelectorAll(sel)].slice(0, 300).map(el => ({el, r: el.getBoundingClientRect()}))
-      .filter(({el, r}) => r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden')
-      .map(({el, r}) => ({label: (el.innerText || el.value || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/\\\\s+/g, ' ').trim().slice(0, 50),
-        box: {x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height}}));
+    const els = [...document.querySelectorAll(sel)].slice(0, 300)
+      .filter(el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.opacity !== '0'; });
+    return els.map(el => {
+      const r = el.getBoundingClientRect();
+      return {label: (el.innerText || el.value || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/s+/g, ' ').trim().slice(0, 50),
+        box: {x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height},
+        ancestors: els.map((other, i) => (other !== el && other.contains(el) ? String(i) : null)).filter(Boolean)};
+    });
   },
   sameSiteLinks(limit) {
-    const seen = new Set();
+    const seen = new Map();
     for (const a of document.querySelectorAll('a[href]')) {
-      const u = new URL(a.href, location.href);
+      let u; try { u = new URL(a.href, location.href); } catch { continue; }
       if (u.origin !== location.origin || !/^https?:$/.test(u.protocol)) continue;
       u.hash = '';
-      if (u.href !== location.href.split('#')[0]) seen.add(u.href);
+      if (u.href === location.href.split('#')[0] || seen.has(u.href)) continue;
+      const block = a.closest('li, p, div, nav') || a;
+      seen.set(u.href, {url: u.href, text: (a.innerText || a.getAttribute('aria-label') || '').replace(/s+/g, ' ').trim().slice(0, 80),
+        nearby: (block.innerText || '').replace(/s+/g, ' ').slice(0, 120)});
       if (seen.size >= limit) break;
     }
-    return [...seen];
+    return [...seen.values()];
   },
-  async checkLinks(urls, parallel, timeoutMs) {
-    const bad = [];
-    const one = async url => {
-      const attempt = async method => {
-        const c = new AbortController(); const t = setTimeout(() => c.abort(), timeoutMs);
-        try { return (await fetch(url, {method, redirect: 'follow', signal: c.signal, credentials: 'same-origin'})).status; } finally { clearTimeout(t); }
-      };
+  async checkLinks(urls, parallel, timeoutMs, deadlineMs) {
+    // Without cookies and without following redirects: a check must not act as the user or wander to other sites.
+    const bad = [], skipped = [];
+    const deadline = Date.now() + deadlineMs;
+    const attempt = async (url, method) => {
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), timeoutMs);
       try {
-        let status = await attempt('HEAD');
-        if (status === 405 || status === 501) status = await attempt('GET');
-        if (status >= 400) bad.push({url, status});
+        const r = await fetch(url, {method, redirect: 'manual', credentials: 'omit', cache: 'no-store', signal: c.signal});
+        return r.type === 'opaqueredirect' ? 0 : r.status;
+      } finally { clearTimeout(t); c.abort(); }
+    };
+    const one = async url => {
+      try {
+        let status = await attempt(url, 'HEAD');
+        if (status === 405 || status === 501) status = await attempt(url, 'GET');
+        if (status === 401 || status === 403) skipped.push({url, why: '\u043D\u0443\u0436\u0435\u043D \u0432\u0445\u043E\u0434'});
+        else if (status >= 400) bad.push({url, status});
       } catch (e) { bad.push({url, error: e.name === 'AbortError' ? '\u0442\u0430\u0439\u043C\u0430\u0443\u0442' : String(e.message || e)}); }
     };
     const queue = [...urls];
-    await Promise.all(Array.from({length: parallel}, async () => { while (queue.length) await one(queue.shift()); }));
-    return bad;
+    await Promise.all(Array.from({length: parallel}, async () => {
+      while (queue.length) { const url = queue.shift(); if (Date.now() > deadline) { skipped.push({url, why: '\u0432\u0440\u0435\u043C\u044F \u0432\u044B\u0448\u043B\u043E'}); continue; } await one(url); }
+    }));
+    return {bad, skipped};
   },
 `;
 
@@ -39256,136 +39457,6 @@ function renderDiff(d, max = 30) {
   return [...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n");
 }
 
-// src/page/diagnostics.ts
-var GROUPS_MAX = 30;
-var TEXT_MAX = 300;
-function argText(arg) {
-  if (arg.value !== void 0) return typeof arg.value === "string" ? arg.value : JSON.stringify(arg.value);
-  return arg.description ?? arg.type ?? "";
-}
-var Diagnostics = class {
-  since = Date.now();
-  #since = this.since;
-  #limit;
-  #console = [];
-  #network = [];
-  #droppedConsole = 0;
-  #droppedNetwork = 0;
-  #requests = /* @__PURE__ */ new Map();
-  #off;
-  constructor(cdp, limit = 300) {
-    this.#limit = limit;
-    this.#off = cdp.on((method, params, sessionId) => this.#event(method, params, sessionId));
-  }
-  get collectedSince() {
-    return this.#since;
-  }
-  console() {
-    return { entries: [...this.#console], dropped: this.#droppedConsole };
-  }
-  network() {
-    return { entries: [...this.#network], dropped: this.#droppedNetwork };
-  }
-  reset() {
-    this.#console = [];
-    this.#network = [];
-    this.#droppedConsole = 0;
-    this.#droppedNetwork = 0;
-    this.#since = Date.now();
-  }
-  stop() {
-    this.#off();
-  }
-  #pushConsole(entry) {
-    this.#console.push(entry);
-    if (this.#console.length > this.#limit) {
-      this.#console.shift();
-      this.#droppedConsole++;
-    }
-  }
-  #pushNetwork(entry) {
-    this.#network.push(entry);
-    if (this.#network.length > this.#limit) {
-      this.#network.shift();
-      this.#droppedNetwork++;
-    }
-  }
-  #event(method, params, sessionId) {
-    const at = Date.now();
-    if (method === "Runtime.consoleAPICalled") {
-      const level = params.type === "error" || params.type === "assert" ? "error" : params.type === "warning" ? "warning" : null;
-      if (!level) return;
-      const frame = params.stackTrace?.callFrames?.[0];
-      this.#pushConsole({ level, source: "console", text: (params.args ?? []).map(argText).join(" ").trim(), url: frame?.url, line: frame ? frame.lineNumber + 1 : void 0, at });
-    } else if (method === "Runtime.exceptionThrown") {
-      const d = params.exceptionDetails ?? {};
-      this.#pushConsole({ level: "error", source: "exception", text: (d.exception?.description ?? d.text ?? "").split("\n")[0], url: d.url, line: d.lineNumber !== void 0 ? d.lineNumber + 1 : void 0, at });
-    } else if (method === "Log.entryAdded") {
-      const e = params.entry ?? {};
-      if (e.level !== "error" && e.level !== "warning") return;
-      this.#pushConsole({ level: e.level, source: "log", text: e.text ?? "", url: e.url, line: e.lineNumber !== void 0 ? e.lineNumber + 1 : void 0, at });
-    } else if (method === "Network.requestWillBeSent") {
-      this.#requests.set(`${sessionId ?? ""}|${params.requestId}`, { method: params.request?.method ?? "GET", url: params.request?.url ?? "", type: params.type });
-    } else if (method === "Network.responseReceived") {
-      const status = params.response?.status ?? 0;
-      if (status < 400) return;
-      const req = this.#requests.get(`${sessionId ?? ""}|${params.requestId}`);
-      this.#pushNetwork({ method: req?.method ?? "GET", url: params.response?.url ?? req?.url ?? "", status, type: params.type ?? req?.type, at });
-    } else if (method === "Network.loadingFailed") {
-      if (params.canceled) return;
-      const req = this.#requests.get(`${sessionId ?? ""}|${params.requestId}`);
-      const reason = params.corsErrorStatus?.corsError ? `CORS: ${params.corsErrorStatus.corsError}` : params.blockedReason ? `\u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D: ${params.blockedReason}` : params.errorText;
-      this.#pushNetwork({ method: req?.method ?? "GET", url: req?.url ?? "", error: reason, type: params.type ?? req?.type, at });
-    }
-  }
-};
-var clock = (t) => new Date(t).toTimeString().slice(0, 8);
-var footer = (since) => `\u0441\u043E\u0431\u0440\u0430\u043D\u043E \u0441 ${clock(since)} (\u0441 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F \u043A \u0432\u043A\u043B\u0430\u0434\u043A\u0435); \u043E\u0448\u0438\u0431\u043A\u0438 \u0434\u043E \u044D\u0442\u043E\u0433\u043E \u043D\u0435 \u0432\u0438\u0434\u043D\u044B \u2014 \u0447\u0442\u043E\u0431\u044B \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438, \u0432\u044B\u0437\u043E\u0432\u0438\u0442\u0435 \u0441 reload: true`;
-var cut = (s) => s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX - 1)}\u2026` : s;
-function grouped(items, key) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const item of items) {
-    const k = key(item);
-    const g = groups.get(k);
-    if (g) g.count++;
-    else groups.set(k, { item, count: 1 });
-  }
-  return [...groups.values()].sort((a, b) => b.count - a.count);
-}
-function summarizeConsole(d, level) {
-  const entries = d.entries.filter((e) => level === "all" || e.level === level);
-  const lines = [footer(d.since)];
-  if (!entries.length) {
-    lines.push("\u041E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442.");
-    return lines.join("\n");
-  }
-  const groups = grouped(entries, (e) => `${e.level}|${e.text}`);
-  lines.push(`\u0417\u0430\u043F\u0438\u0441\u0435\u0439: ${entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
-  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
-    const where = item.url ? ` \xB7 ${item.url}${item.line ? `:${item.line}` : ""}` : "";
-    lines.push(`${item.level === "error" ? "\u043E\u0448\u0438\u0431\u043A\u0430" : "\u043F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u0435"}${count > 1 ? ` \xD7${count}` : ""}${item.source === "exception" ? " (\u043D\u0435\u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u043D\u043D\u043E\u0435 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435)" : ""} \xB7 ${cut(item.text)}${where}`);
-  }
-  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX} \u0440\u0430\u0437\u043D\u044B\u0445 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u0439.`);
-  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
-  return lines.join("\n");
-}
-function summarizeNetwork(d) {
-  const lines = [footer(d.since)];
-  if (!d.entries.length) {
-    lines.push("\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435\u0442.");
-    return lines.join("\n");
-  }
-  const base = (url2) => url2.split(/[?#]/)[0];
-  const groups = grouped(d.entries, (e) => `${e.method}|${e.status ?? e.error}|${base(e.url)}`);
-  lines.push(`\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432: ${d.entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
-  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
-    lines.push(`${item.method} ${item.status ?? item.error}${count > 1 ? ` \xD7${count}` : ""} \xB7 ${cut(base(item.url))}${item.type ? ` (${item.type.toLowerCase()})` : ""}`);
-  }
-  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX}.`);
-  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
-  return lines.join("\n");
-}
-
 // src/page/classify.ts
 var USER_STEP = /* @__PURE__ */ new Set(["pay", "access", "secret", "captcha"]);
 function vocabulary(words) {
@@ -39563,7 +39634,7 @@ var PageTools = class {
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
-    this.diagnostics = new Diagnostics(session.cdp);
+    this.diagnostics = session.diagnostics;
     session.cdp.on((method, _params, sessionId) => {
       if (method === "Page.loadEventFired" && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300);
     });
@@ -39891,7 +39962,8 @@ ${diff}` : head;
     const result = await this.run(async () => {
       const m = await this.session.cdp.send("Page.getLayoutMetrics");
       const v = m.cssLayoutViewport;
-      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth));
+      const dpr = await probeEval(this.session, this.session.frames.main().frameId, this.observer.probes, "devicePixelRatio").catch(() => 1) || 1;
+      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth * dpr));
       const { data } = await this.session.cdp.send(
         "Page.captureScreenshot",
         { format: "jpeg", quality: 70, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } },
@@ -39899,7 +39971,7 @@ ${diff}` : head;
         2e4
       );
       image = data;
-      return `\u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0441\u0434\u0435\u043B\u0430\u043D: ${Math.round(v.clientWidth * scale)}\xD7${Math.round(v.clientHeight * scale)}, \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D \u043A \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C\u0443 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044E`;
+      return `\u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0441\u0434\u0435\u043B\u0430\u043D: ${Math.round(v.clientWidth * scale * dpr)}\xD7${Math.round(v.clientHeight * scale * dpr)}, \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D \u043A \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C\u0443 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044E`;
     });
     return image ? { ...result, image } : result;
   }
@@ -39908,34 +39980,82 @@ ${diff}` : head;
     return this.run(async () => {
       const main = this.session.frames.main().frameId;
       const probe = (expr, timeout) => probeEval(this.session, main, this.observer.probes, expr, timeout);
+      const section = async (title, fn, show) => {
+        try {
+          return show(await fn());
+        } catch (error62) {
+          return `${title}: \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C (${error62 instanceof Error ? error62.message : String(error62)})`;
+        }
+      };
       const { roots } = await this.observer.observe();
-      const [broken, noAlt, overflow, controls, links] = await Promise.all([
-        probe("__assistant.brokenImages()"),
-        probe("__assistant.imagesWithoutAlt()"),
-        probe("__assistant.overflow()"),
-        probe("__assistant.controls()"),
-        probe(`__assistant.sameSiteLinks(${LINKS_MAX})`)
-      ]);
-      const badLinks = links.length ? await probe(`__assistant.checkLinks(${JSON.stringify(links)}, 6, 5000)`, 6e4) : [];
-      const unnamed = findUnnamed(roots);
-      const overlaps = findOverlaps(controls.map((c, i) => ({ ref: String(i), label: c.label, box: c.box })));
-      const lines = [];
-      lines.push(broken.length ? `\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: ${broken.length}
-${broken.map((b) => `- ${b.src}${b.alt ? ` (alt \xAB${b.alt}\xBB)` : ""}`).join("\n")}` : "\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: \u043D\u0435\u0442");
-      lines.push(badLinks.length ? `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430 \u0441 \u043E\u0448\u0438\u0431\u043A\u043E\u0439: ${badLinks.length} \u0438\u0437 ${links.length} \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0445
-${badLinks.map((b) => `- ${b.status ?? b.error} \xB7 ${b.url}`).join("\n")}` : `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E ${links.length}${links.length >= LINKS_MAX ? " (\u043F\u0435\u0440\u0432\u044B\u0435)" : ""}, \u043E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442`);
-      lines.push(unnamed.length ? `\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 (\u043D\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0435\u0442 \u044D\u043A\u0440\u0430\u043D\u043D\u044B\u0439 \u0434\u0438\u043A\u0442\u043E\u0440 \u0438 \u043D\u0435 \u043F\u043E\u0439\u043C\u0451\u0442 \u043C\u043E\u0434\u0435\u043B\u044C): ${unnamed.length}
+      const linksSection = section("\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430", async () => {
+        const candidates = await probe(`__assistant.sameSiteLinks(${LINKS_MAX * 3})`);
+        const dangerous = candidates.filter((c) => DANGEROUS_URL.test(c.url) || ["logout", "delete", "access", "pay", "send", "captcha"].includes(classify({
+          action: "activate",
+          role: "link",
+          name: c.text,
+          tag: "a",
+          type: "",
+          inForm: false,
+          formHasPassword: false,
+          secretField: false,
+          nearbyText: ""
+        }) ?? ""));
+        const safe = candidates.filter((c) => !dangerous.includes(c)).slice(0, LINKS_MAX);
+        this.diagnostics.mute(safe.map((c) => c.url));
+        try {
+          const r = safe.length ? await probe(
+            `__assistant.checkLinks(${JSON.stringify(safe.map((c) => c.url))}, 6, 5000, 20000)`,
+            3e4
+          ) : { bad: [], skipped: [] };
+          return { r, safe: safe.length, dangerous };
+        } finally {
+          this.diagnostics.unmute();
+        }
+      }, ({ r, safe, dangerous }) => [
+        r.bad.length ? `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430 \u0441 \u043E\u0448\u0438\u0431\u043A\u043E\u0439: ${r.bad.length} \u0438\u0437 ${safe} \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0445
+${r.bad.map((b) => `- ${b.status ?? b.error} \xB7 ${shortUrl(b.url)}`).join("\n")}` : `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E ${safe}${safe >= LINKS_MAX ? " (\u043F\u0435\u0440\u0432\u044B\u0435)" : ""}, \u043E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442`,
+        r.skipped.length ? `\u041D\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u044B: ${r.skipped.length} (${[...new Set(r.skipped.map((s) => s.why))].join(", ")})` : "",
+        dangerous.length ? `\u041D\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u043B\u0438\u0441\u044C (\u043E\u043F\u0430\u0441\u043D\u044B\u0435 \u2014 \u0432\u044B\u0445\u043E\u0434, \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435, \u043E\u0442\u043F\u0438\u0441\u043A\u0430 \u0438 \u0442. \u043F.): ${dangerous.slice(0, 10).map((d) => `\xAB${d.text || shortUrl(d.url)}\xBB`).join(", ")}${dangerous.length > 10 ? ` \u0438 \u0435\u0449\u0451 ${dangerous.length - 10}` : ""}` : ""
+      ].filter(Boolean).join("\n"));
+      const parts = await Promise.all([
+        section(
+          "\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438",
+          () => probe("__assistant.brokenImages()"),
+          (broken) => broken.length ? `\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: ${broken.length}
+${broken.map((b) => `- ${shortUrl(b.src)}${b.alt ? ` (alt \xAB${b.alt}\xBB)` : ""}`).join("\n")}` : "\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: \u043D\u0435\u0442"
+        ),
+        linksSection,
+        section("\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438", async () => findUnnamed(roots), (unnamed) => unnamed.length ? `\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 (\u043D\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0435\u0442 \u044D\u043A\u0440\u0430\u043D\u043D\u044B\u0439 \u0434\u0438\u043A\u0442\u043E\u0440 \u0438 \u043D\u0435 \u043F\u043E\u0439\u043C\u0451\u0442 \u043C\u043E\u0434\u0435\u043B\u044C): ${unnamed.length}
 ${unnamed.slice(0, 20).map((n) => {
-        if (n.backendNodeId !== void 0) this.refs.assign(n);
-        return `- ${renderLine(n)}`;
-      }).join("\n")}` : "\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438: \u043D\u0435\u0442");
-      lines.push(noAlt.length ? `\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: ${noAlt.length}
-${noAlt.map((s) => `- ${s}`).join("\n")}` : "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: \u043D\u0435\u0442");
-      lines.push(overflow.pageOverflow > 1 || overflow.elements.length ? `\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0448\u0438\u0440\u0435 \u043E\u043A\u043D\u0430 (${overflow.width} px) \u043D\u0430 ${Math.max(0, overflow.pageOverflow)} px
-${overflow.elements.map((e) => `- \xAB${e.text}\xBB \u0434\u043E ${e.right} px`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u043D\u0435\u0442");
-      lines.push(overlaps.length ? `\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: ${overlaps.length}
-${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${controls[Number(b)].label}\xBB`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: \u043D\u0435\u0442");
-      return { head: `\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \xB7 ${this.session.frames.main().url}`, body: lines.join("\n\n"), notices: [] };
+          if (n.backendNodeId !== void 0) this.refs.assign(n);
+          return `- ${renderLine(n)}`;
+        }).join("\n")}` : "\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438: \u043D\u0435\u0442"),
+        section(
+          "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt",
+          () => probe("__assistant.imagesWithoutAlt()"),
+          (noAlt) => noAlt.length ? `\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: ${noAlt.length}
+${noAlt.map((s) => `- ${shortUrl(s)}`).join("\n")}` : "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: \u043D\u0435\u0442"
+        ),
+        section(
+          "\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435",
+          () => probe("__assistant.overflow()"),
+          (o) => o.pageOverflow > 1 ? `\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0448\u0438\u0440\u0435 \u043E\u043A\u043D\u0430 (${o.width} px) \u043D\u0430 ${o.pageOverflow} px
+${o.elements.map((e) => `- \xAB${e.text}\xBB \u0434\u043E ${e.right} px`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u043D\u0435\u0442"
+        ),
+        section("\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B", () => probe("__assistant.controls()"), (controls) => {
+          const overlaps = findOverlaps(controls.map((c, i) => ({ ref: String(i), label: c.label, box: c.box, ancestors: c.ancestors })));
+          return overlaps.length ? `\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: ${overlaps.length}
+${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${controls[Number(b)].label}\xBB`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: \u043D\u0435\u0442";
+        })
+      ]);
+      let body = parts.join("\n\n");
+      const notices = [];
+      if (body.length > this.budget) {
+        body = body.slice(0, this.budget);
+        notices.push("\u041E\u0442\u0447\u0451\u0442 \u0443\u0440\u0435\u0437\u0430\u043D \u0434\u043E \u0431\u044E\u0434\u0436\u0435\u0442\u0430 \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u044F.");
+      }
+      return { head: `\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \xB7 ${this.session.frames.main().url}`, body, notices };
     });
   }
   highlight(args) {
@@ -40030,7 +40150,6 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
   }
   dispose() {
     this.observer.network.stop();
-    this.diagnostics.stop();
   }
 };
 
