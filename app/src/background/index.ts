@@ -34,6 +34,7 @@ const runner = new ChatRunner({
   notes: notesApi,
   setSiteRule: (site, rule) => setSiteRule(site, rule),
   capabilities: settings => modelCapabilities(settings.ollamaUrl, settings.model),
+  contextTokens: settings => modelContext(settings.ollamaUrl, settings.model),
 });
 
 // A worker that starts has no replies in progress: any left `streaming` belonged to a worker that was stopped.

@@ -8,7 +8,7 @@ import {agentSystemPrompt, systemPrompt} from '../agent/prompt.ts';
 import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
 import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
-import {elideOldPages} from '../agent/elision.ts';
+import {fitToContext} from '../agent/elision.ts';
 import {ScreenshotStore} from '../agent/screenshots.ts';
 import type {NotesApi} from '../agent/notes.ts';
 import type {Gate, PageTools} from '../page/index.ts';
@@ -46,6 +46,8 @@ export interface ChatDeps {
   setSiteRule?: (site: string, rule: SiteRule) => Promise<unknown>;
   /** What the model can do (Ollama capabilities); 'vision' turns on screenshots. */
   capabilities?: (settings: Settings) => Promise<string[]>;
+  /** The model's context window in tokens; 8192 when unknown. */
+  contextTokens?: (settings: Settings) => Promise<number>;
 }
 
 interface Run {
@@ -180,6 +182,7 @@ export class ChatRunner {
     };
     const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes('vision');
     const screenshots = new ScreenshotStore();
+    const context = await this.#deps.contextTokens?.(settings).catch(() => 8192) ?? 8192;
     // Agent mode needs a tab and the agent dependencies; otherwise the reply is a Chat-mode one.
     const agentMode = conversation.mode === 'agent' && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== undefined;
     const conversationId = conversation.id;
@@ -205,7 +208,7 @@ export class ChatRunner {
         settings, system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
         messages: toModelMessages([...history, user]), signal: run.controller.signal, tools,
         ...(agent
-          ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(elideOldPages(m))}
+          ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, context))}
           : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(m)}),
       });
       for await (const part of parts) {

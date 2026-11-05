@@ -37682,6 +37682,62 @@ function elideOldPages(messages, keep = 3) {
     return { ...msg, content: msg.content.map((part, j) => drop.has(`${i}:${j}`) ? { ...part, output: { ...part.output, type: "text", value: ELIDED } } : part) };
   });
 }
+var IMAGE_TOKENS = 1e3;
+function estimateTokens(messages) {
+  let chars = 0, images = 0;
+  const part = (p) => {
+    if (typeof p === "string") {
+      chars += p.length;
+      return;
+    }
+    const x = p;
+    if (x.type === "image") {
+      images++;
+      return;
+    }
+    if (typeof x.text === "string") chars += x.text.length;
+    if (typeof x.output?.value === "string") chars += x.output.value.length;
+    if (x.input !== void 0) chars += JSON.stringify(x.input).length;
+  };
+  for (const m of messages) {
+    const content = m.content;
+    if (Array.isArray(content)) content.forEach(part);
+    else part(content);
+  }
+  return Math.ceil(chars / 4) + images * IMAGE_TOKENS;
+}
+function shortenOldReceipts(messages, keep) {
+  const receipts = [];
+  messages.forEach((m, i) => {
+    const msg = m;
+    if (msg.role !== "tool" || !Array.isArray(msg.content)) return;
+    msg.content.forEach((p, j) => {
+      if (p.toolName && !READING_TOOLS.has(p.toolName) && typeof p.output?.value === "string") receipts.push([i, j]);
+    });
+  });
+  const cut2 = new Set(receipts.slice(0, Math.max(0, receipts.length - keep)).map(([i, j]) => `${i}:${j}`));
+  if (!cut2.size) return messages;
+  return messages.map((m, i) => {
+    const msg = m;
+    if (!Array.isArray(msg.content) || !msg.content.some((_, j) => cut2.has(`${i}:${j}`))) return m;
+    return { ...msg, content: msg.content.map((p, j) => {
+      if (!cut2.has(`${i}:${j}`)) return p;
+      const lines = String(p.output.value).split("\n").filter((l) => !l.startsWith("<<<"));
+      return { ...p, output: { ...p.output, value: `${lines[0] ?? ""} [\u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438 \u0441\u043A\u0440\u044B\u0442\u044B]` } };
+    }) };
+  });
+}
+function fitToContext(messages, contextTokens) {
+  const limit = 0.7 * contextTokens;
+  if (estimateTokens(messages) <= limit) return messages;
+  const levels = [(m) => elideOldPages(m, 3), (m) => elideOldPages(m, 1), (m) => shortenOldReceipts(elideOldPages(m, 1), 10)];
+  let out = messages;
+  for (const level of levels) {
+    out = level(messages);
+    if (estimateTokens(out) <= limit) return out;
+  }
+  return out;
+}
 
 // src/agent/screenshots.ts
 var ScreenshotStore = class {
@@ -40478,6 +40534,7 @@ var ChatRunner = class {
     };
     const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes("vision");
     const screenshots = new ScreenshotStore();
+    const context = await this.#deps.contextTokens?.(settings).catch(() => 8192) ?? 8192;
     const agentMode = conversation.mode === "agent" && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== void 0;
     const conversationId = conversation.id;
     const agent = agentMode ? createAgentSession({
@@ -40512,7 +40569,7 @@ var ChatRunner = class {
         messages: toModelMessages([...history, user]),
         signal: run.controller.signal,
         tools,
-        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(elideOldPages(m)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(m) }
+        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(fitToContext(m, context)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(m) }
       });
       for await (const part of parts) {
         if (part.type === "step") {
@@ -40632,7 +40689,8 @@ var runner = new ChatRunner({
   tabGroupsApi: chrome.tabGroups,
   notes: notesApi,
   setSiteRule: (site, rule) => setSiteRule(site, rule),
-  capabilities: (settings) => modelCapabilities(settings.ollamaUrl, settings.model)
+  capabilities: (settings) => modelCapabilities(settings.ollamaUrl, settings.model),
+  contextTokens: (settings) => modelContext(settings.ollamaUrl, settings.model)
 });
 var ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
 chrome.runtime.onConnect.addListener((port) => {
