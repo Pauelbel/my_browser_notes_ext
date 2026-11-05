@@ -14,6 +14,7 @@ import {diffLines, renderDiff} from './diff.ts';
 import {render} from './render.ts';
 import {waitForReady} from './readiness.ts';
 import {probeEval} from './probe.ts';
+import {Diagnostics, summarizeConsole, summarizeNetwork} from './diagnostics.ts';
 import type {ONode} from './outline.ts';
 import {classify, USER_STEP, type Category} from './classify.ts';
 import {isSecretField} from './masking.ts';
@@ -77,6 +78,7 @@ export class PageTools {
   readonly observer: Observer;
   budget: number;
   readonly highlighter: Highlighter;
+  readonly diagnostics: Diagnostics;
   /** Highlights made in this session, by page address, so going back to a page shows them again. */
   readonly #highlights: {url: string; text?: string; element?: {role: string; name: string}; color: HighlightColor}[] = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
@@ -91,6 +93,7 @@ export class PageTools {
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
+    this.diagnostics = new Diagnostics(session.cdp);
     session.cdp.on((method, _params, sessionId) => { if (method === 'Page.loadEventFired' && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300); });
     session.cdp.on(method => { if (method === 'Page.javascriptDialogClosed') this.dialog = undefined; });
     session.cdp.on((method, params) => { if (method === 'Page.javascriptDialogOpening') this.dialog = {type: params.type, message: params.message}; });
@@ -382,6 +385,28 @@ export class PageTools {
     });
   }
 
+  /** Optionally reloads the page so collection covers it from the start of loading. */
+  async #fresh(reload?: boolean): Promise<void> {
+    if (!reload) return;
+    this.diagnostics.reset();
+    const r = await this.navigate({action: 'reload'});
+    if (!r.ok) throw new PageError('INTERNAL', `Не удалось перезагрузить страницу: ${r.text}`);
+  }
+
+  consoleLog(args: {level?: 'error' | 'warning' | 'all'; reload?: boolean} = {}): Promise<ToolResult> {
+    return this.run(async () => {
+      await this.#fresh(args.reload);
+      return {head: `Консоль · ${this.session.frames.main().url}`, body: summarizeConsole({...this.diagnostics.console(), since: this.diagnostics.collectedSince}, args.level ?? 'all'), notices: []};
+    });
+  }
+
+  networkLog(args: {reload?: boolean} = {}): Promise<ToolResult> {
+    return this.run(async () => {
+      await this.#fresh(args.reload);
+      return {head: `Сеть · ${this.session.frames.main().url}`, body: summarizeNetwork({...this.diagnostics.network(), since: this.diagnostics.collectedSince}), notices: []};
+    });
+  }
+
   highlight(args: {ref?: string; text?: string; color?: string}): Promise<ToolResult> {
     return this.run(async () => {
       const color = checkColor(args.color);
@@ -479,5 +504,6 @@ export class PageTools {
 
   dispose(): void {
     this.observer.network.stop();
+    this.diagnostics.stop();
   }
 }

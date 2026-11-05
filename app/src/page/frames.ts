@@ -13,7 +13,7 @@ export interface FrameInfo {
 
 interface FrameTree { frame: {id: string; parentId?: string; url: string; loaderId: string}; childFrames?: FrameTree[] }
 
-const DOMAINS = ['Page.enable', 'DOM.enable', 'Accessibility.enable', 'Runtime.enable', 'Network.enable'];
+const DOMAINS = ['Page.enable', 'DOM.enable', 'Accessibility.enable', 'Runtime.enable', 'Network.enable', 'Log.enable'];
 
 export class Frames {
   #cdp: Cdp;
