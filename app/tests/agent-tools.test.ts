@@ -77,7 +77,7 @@ test('buildAgentTools: done возвращает итог, click идёт в т�
 
 test('agentSystemPrompt: правила работы, шаги пользователя, маркеры, роль', () => {
   const text = agentSystemPrompt(qa, ['click', 'done', 'ask_user']);
-  for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки']) assert.ok(text.includes(piece), piece);
+  for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки', 'расширение само спросит']) assert.ok(text.includes(piece), piece);
 });
 
 test('QA-инструменты: в агенте все три, в чате console_log без reload', () => {
