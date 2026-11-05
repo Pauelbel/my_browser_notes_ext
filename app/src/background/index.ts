@@ -6,7 +6,7 @@ import {notesApi} from '../agent/notes.ts';
 import {ollamaStream} from '../llm/stream.ts';
 import {ChatRunner} from './chat-runner.ts';
 import {acquire, release, PageTools, pageBudget} from '../page/index.ts';
-import {modelContext} from '../llm/ollama.ts';
+import {modelCapabilities, modelContext} from '../llm/ollama.ts';
 
 chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true}).catch(console.error);
 
@@ -33,6 +33,7 @@ const runner = new ChatRunner({
   tabGroupsApi: chrome.tabGroups,
   notes: notesApi,
   setSiteRule: (site, rule) => setSiteRule(site, rule),
+  capabilities: settings => modelCapabilities(settings.ollamaUrl, settings.model),
 });
 
 // A worker that starts has no replies in progress: any left `streaming` belonged to a worker that was stopped.

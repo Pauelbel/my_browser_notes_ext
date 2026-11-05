@@ -28,4 +28,8 @@ export default async function ({openPage, base, server, log}) {
   must(/Переполнение по ширине: страница шире окна/.test(checks.text) && checks.text.includes('Очень широкий блок'), 'переполнение');
   must(/Перекрывающиеся элементы: 1/.test(checks.text) && checks.text.includes('Нижняя кнопка'), 'перекрытие');
   must(ms < 15000, `проверки слишком долгие: ${ms} мс`);
+
+  const shot = await dev.eval(`layer.call(${tab}, 'screenshot').then(r => ({ok: r.ok, text: r.text, size: r.image ? r.image.length : 0, jpeg: r.image ? r.image.startsWith('/9j/') : false}))`);
+  log(`скриншот: ${shot.text.replace(/<<<[^>]*>>>|\n/g, ' ').trim()}, ${shot.size} символов base64`);
+  must(shot.ok && shot.jpeg && /\d+×\d+/.test(shot.text) && Number(shot.text.match(/(\d+)×/)[1]) <= 1280, `скриншот: ${JSON.stringify(shot)}`);
 }

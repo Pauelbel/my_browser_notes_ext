@@ -4,16 +4,20 @@ import {tool, type ToolSet} from 'ai';
 import {z} from 'zod';
 import type {Profile, ToolName} from '../store/types.ts';
 import type {NotesApi} from './notes.ts';
+import type {ScreenshotStore} from './screenshots.ts';
 
 export const CHAT_TOOLS: ToolName[] = ['snapshot', 'find', 'read', 'notes_search', 'notes_read'];
-/** Not offered in stage 3: screenshot needs images in tool results; the QA checks come with stage 4. */
-const NOT_YET: ToolName[] = ['screenshot', 'console_log', 'network_log', 'page_checks'];
+/** Not offered yet: the QA checks are wired in the next task. Screenshot depends on the model seeing images. */
+const NOT_YET: ToolName[] = ['console_log', 'network_log', 'page_checks'];
+
+export interface ImageOptions { vision?: boolean; screenshots?: ScreenshotStore }
 
 type Result = Promise<{ok: boolean; text: string}>;
 export interface ReadTools {
   snapshot(args: {mode?: 'interactive' | 'all'; window?: 'near' | 'all'}): Result;
   find(args: {role?: string; name?: string; text?: string}): Result;
   read(args: {ref?: string}): Result;
+  screenshot?(): Promise<{ok: boolean; text: string; image?: string}>;
 }
 export interface ActTools extends ReadTools {
   click(args: {ref: string}): Result;
@@ -35,12 +39,28 @@ export interface AgentContext {
   ask(q: {question: string; kind: 'input' | 'takeover'}): Promise<string>;
   /** Asks the user before a note is changed, in Ask mode; true when allowed. */
   confirmNotes(what: string): Promise<boolean>;
+  vision?: boolean;
+  screenshots?: ScreenshotStore;
 }
 
 const text = async (fn: () => Promise<string>) => { try { return await fn(); } catch (error) { return `ошибка: ${error instanceof Error ? error.message : String(error)}`; } };
 
-function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes?: NotesApi): ToolSet {
+function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes?: NotesApi, images: ImageOptions = {}): ToolSet {
   const tools: ToolSet = {};
+  if (enabled.has('screenshot') && images.vision && images.screenshots) {
+    const store = images.screenshots;
+    tools.screenshot = tool({
+      description: 'Скриншот видимой части текущей страницы: картинка будет приложена к следующему сообщению. Для вёрстки, наложений и того, чего нет в описании.',
+      inputSchema: z.object({}),
+      execute: async () => {
+        const target = await page();
+        if (!target.screenshot) return 'ошибка: скриншот недоступен';
+        const r = await target.screenshot.call(target);
+        if (r.image) store.put(r.image);
+        return r.text;
+      },
+    });
+  }
   if (enabled.has('snapshot')) tools.snapshot = tool({
     description: 'Описание текущей страницы: интерактивные элементы с метками вроде [a12] (кнопки, ссылки, поля) и заголовки. '
       + 'mode="all" добавляет текст страницы; window="all" — всю страницу, а не только около экрана.',
@@ -70,14 +90,14 @@ function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes
   return tools;
 }
 
-export function buildChatTools(profile: Profile, page: () => Promise<ReadTools>, notes?: NotesApi): ToolSet {
-  return readTools(new Set(profile.tools.filter(t => CHAT_TOOLS.includes(t))), page, notes);
+export function buildChatTools(profile: Profile, page: () => Promise<ReadTools>, notes?: NotesApi, images: ImageOptions = {}): ToolSet {
+  return readTools(new Set(profile.tools.filter(t => CHAT_TOOLS.includes(t) || t === 'screenshot')), page, notes, images);
 }
 
 export function buildAgentTools(profile: Profile, ctx: AgentContext): ToolSet {
   // done and ask_user are always there: without them a run cannot finish properly or hand a step to the user.
   const enabled = new Set([...profile.tools.filter(t => !NOT_YET.includes(t)), 'done' as ToolName, 'ask_user' as ToolName]);
-  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes);
+  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes, {vision: ctx.vision, screenshots: ctx.screenshots});
   // Methods are called on the tab's tools object: they use `this`.
   const page = async (name: keyof ActTools, args: unknown): Promise<string> => {
     const target = await ctx.tabs.current();

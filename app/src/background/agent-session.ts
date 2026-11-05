@@ -5,6 +5,7 @@ import {USER_STEP} from '../page/index.ts';
 import {AgentTabs} from '../agent/agent-tabs.ts';
 import {buildAgentTools, type ActTools} from '../agent/tools.ts';
 import type {NotesApi} from '../agent/notes.ts';
+import type {ScreenshotStore} from '../agent/screenshots.ts';
 import {decideWrite, ruleFor} from '../agent/permissions.ts';
 import type {PanelAnswer, PendingPrompt} from '../shared/protocol.ts';
 import type {Conversation, Profile, Settings, SiteRule, ToolName} from '../store/types.ts';
@@ -61,6 +62,8 @@ export interface AgentDeps {
   /** The chat's tabs and group, kept between replies. */
   memory: {members: Set<number>; groupId: number | null};
   ask: Ask;
+  vision?: boolean;
+  screenshots?: ScreenshotStore;
   openTab: (tabId: number, gate: Gate) => Promise<{tools: PageTools; release(): Promise<void>}>;
   tabsApi: typeof chrome.tabs;
   tabGroupsApi?: typeof chrome.tabGroups;
@@ -82,6 +85,8 @@ export function createAgentSession(deps: AgentDeps): {tools: ToolSet; names: Too
     tabs: {current: async () => (await tabs.current()) as unknown as ActTools, list: () => tabs.list(), open: url => tabs.open(url),
       switch: id => tabs.switch(id), close: id => tabs.close(id)},
     notes: deps.notes ?? NO_NOTES,
+    vision: deps.vision,
+    screenshots: deps.screenshots,
     ask: async ({question, kind}) => {
       const answer = await deps.ask({kind, text: question});
       if (kind === 'takeover') return answer === 'done' ? 'Пользователь сделал этот шаг и вернул вкладку.' : 'Пользователь отменил этот шаг: не пытайтесь сделать его другим способом.';

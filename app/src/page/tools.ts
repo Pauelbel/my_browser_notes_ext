@@ -26,6 +26,8 @@ import {checkColor, Highlighter, type HighlightColor} from './highlight.ts';
 export interface ToolResult {
   text: string;
   ok: boolean;
+  /** A screenshot (base64 JPEG), for models that see images. */
+  image?: string;
 }
 
 export interface GateQuestion { action: string; ref: string; role: string; name: string; category: Category; site: string; url: string }
@@ -408,6 +410,21 @@ export class PageTools {
       await this.#fresh(args.reload);
       return {head: `Сеть · ${this.session.frames.main().url}`, body: summarizeNetwork({...this.diagnostics.network(), since: this.diagnostics.collectedSince}), notices: []};
     });
+  }
+
+  /** The visible part of the page as JPEG, at most 1280 px wide. */
+  async screenshot(): Promise<ToolResult> {
+    let image = '';
+    const result = await this.run(async () => {
+      const m = await this.session.cdp.send<{cssLayoutViewport: {pageX: number; pageY: number; clientWidth: number; clientHeight: number}}>('Page.getLayoutMetrics');
+      const v = m.cssLayoutViewport;
+      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth));
+      const {data} = await this.session.cdp.send<{data: string}>('Page.captureScreenshot',
+        {format: 'jpeg', quality: 70, clip: {x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale}}, undefined, 20000);
+      image = data;
+      return `скриншот сделан: ${Math.round(v.clientWidth * scale)}×${Math.round(v.clientHeight * scale)}, приложен к следующему сообщению`;
+    });
+    return image ? {...result, image} : result;
   }
 
   /** Checks of the visible page for common bugs; each section says what it found, or that it found nothing. */

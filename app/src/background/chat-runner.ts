@@ -9,6 +9,7 @@ import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
 import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
 import {elideOldPages} from '../agent/elision.ts';
+import {ScreenshotStore} from '../agent/screenshots.ts';
 import type {NotesApi} from '../agent/notes.ts';
 import type {Gate, PageTools} from '../page/index.ts';
 import {PromptBroker} from './prompts.ts';
@@ -43,6 +44,8 @@ export interface ChatDeps {
   tabGroupsApi?: typeof chrome.tabGroups;
   notes?: NotesApi;
   setSiteRule?: (site: string, rule: SiteRule) => Promise<unknown>;
+  /** What the model can do (Ollama capabilities); 'vision' turns on screenshots. */
+  capabilities?: (settings: Settings) => Promise<string[]>;
 }
 
 interface Run {
@@ -175,6 +178,8 @@ export class ChatRunner {
       handle ??= this.#deps.page(tabId);
       return handle.then(h => h.tools, error => unavailable(error instanceof Error ? error.message : String(error)));
     };
+    const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes('vision');
+    const screenshots = new ScreenshotStore();
     // Agent mode needs a tab and the agent dependencies; otherwise the reply is a Chat-mode one.
     const agentMode = conversation.mode === 'agent' && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== undefined;
     const conversationId = conversation.id;
@@ -185,8 +190,9 @@ export class ChatRunner {
       readPermission: async () => (await getConversation(conversationId))?.permission ?? conversation.permission,
       memory: this.#tabMemory.get(conversationId) ?? (this.#tabMemory.set(conversationId, {members: new Set(), groupId: null}).get(conversationId)!),
       ask: prompt => this.#broker.ask({...prompt, conversationId}, run.controller.signal),
+      vision, screenshots,
     }) : null;
-    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes) : {};
+    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, {vision, screenshots}) : {};
     const toolNames = Object.keys(tools) as ToolName[];
     let steps = 0;
     let doneSummary: string | null = null;
@@ -198,7 +204,9 @@ export class ChatRunner {
       const parts = this.#deps.stream({
         settings, system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
         messages: toModelMessages([...history, user]), signal: run.controller.signal, tools,
-        ...(agent ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: elideOldPages} : {maxSteps: CHAT_MAX_STEPS}),
+        ...(agent
+          ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(elideOldPages(m))}
+          : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(m)}),
       });
       for await (const part of parts) {
         if (part.type === 'step') { steps++; continue; }

@@ -2146,6 +2146,24 @@ ${diff}` : head;
       return { head: `\u0421\u0435\u0442\u044C \xB7 ${this.session.frames.main().url}`, body: summarizeNetwork({ ...this.diagnostics.network(), since: this.diagnostics.collectedSince }), notices: [] };
     });
   }
+  /** The visible part of the page as JPEG, at most 1280 px wide. */
+  async screenshot() {
+    let image = "";
+    const result = await this.run(async () => {
+      const m = await this.session.cdp.send("Page.getLayoutMetrics");
+      const v = m.cssLayoutViewport;
+      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth));
+      const { data } = await this.session.cdp.send(
+        "Page.captureScreenshot",
+        { format: "jpeg", quality: 70, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } },
+        void 0,
+        2e4
+      );
+      image = data;
+      return `\u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0441\u0434\u0435\u043B\u0430\u043D: ${Math.round(v.clientWidth * scale)}\xD7${Math.round(v.clientHeight * scale)}, \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D \u043A \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C\u0443 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044E`;
+    });
+    return image ? { ...result, image } : result;
+  }
   /** Checks of the visible page for common bugs; each section says what it found, or that it found nothing. */
   pageChecks() {
     return this.run(async () => {

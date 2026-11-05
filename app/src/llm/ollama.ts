@@ -65,3 +65,15 @@ export async function modelContext(baseUrl: string, model: string, fetchFn: type
   const loaded = running?.models?.find((m: {name: string}) => m.name === model);
   return Number(loaded?.context_length) || 8192;
 }
+
+/** What the model can do (Ollama /api/show → capabilities: vision, tools, thinking…); [] when unknown. */
+export async function modelCapabilities(baseUrl: string, model: string, fetchFn: typeof fetch = fetch): Promise<string[]> {
+  try {
+    const response = await fetchFn(`${baseUrl}/api/show`, {method: 'POST', body: JSON.stringify({model})});
+    if (!response.ok) return [];
+    const body = await response.json();
+    return Array.isArray(body.capabilities) ? body.capabilities : [];
+  } catch {
+    return [];
+  }
+}

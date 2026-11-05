@@ -37454,10 +37454,20 @@ async function modelContext(baseUrl, model, fetchFn = fetch) {
   const loaded = running?.models?.find((m) => m.name === model);
   return Number(loaded?.context_length) || 8192;
 }
+async function modelCapabilities(baseUrl, model, fetchFn = fetch) {
+  try {
+    const response = await fetchFn(`${baseUrl}/api/show`, { method: "POST", body: JSON.stringify({ model }) });
+    if (!response.ok) return [];
+    const body = await response.json();
+    return Array.isArray(body.capabilities) ? body.capabilities : [];
+  } catch {
+    return [];
+  }
+}
 
 // src/agent/tools.ts
 var CHAT_TOOLS = ["snapshot", "find", "read", "notes_search", "notes_read"];
-var NOT_YET = ["screenshot", "console_log", "network_log", "page_checks"];
+var NOT_YET = ["console_log", "network_log", "page_checks"];
 var text2 = async (fn) => {
   try {
     return await fn();
@@ -37465,8 +37475,22 @@ var text2 = async (fn) => {
     return `\u043E\u0448\u0438\u0431\u043A\u0430: ${error62 instanceof Error ? error62.message : String(error62)}`;
   }
 };
-function readTools(enabled, page, notes) {
+function readTools(enabled, page, notes, images = {}) {
   const tools = {};
+  if (enabled.has("screenshot") && images.vision && images.screenshots) {
+    const store = images.screenshots;
+    tools.screenshot = tool({
+      description: "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0447\u0430\u0441\u0442\u0438 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u0431\u0443\u0434\u0435\u0442 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0430 \u043A \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C\u0443 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044E. \u0414\u043B\u044F \u0432\u0451\u0440\u0441\u0442\u043A\u0438, \u043D\u0430\u043B\u043E\u0436\u0435\u043D\u0438\u0439 \u0438 \u0442\u043E\u0433\u043E, \u0447\u0435\u0433\u043E \u043D\u0435\u0442 \u0432 \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0438.",
+      inputSchema: external_exports.object({}),
+      execute: async () => {
+        const target = await page();
+        if (!target.screenshot) return "\u043E\u0448\u0438\u0431\u043A\u0430: \u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D";
+        const r = await target.screenshot.call(target);
+        if (r.image) store.put(r.image);
+        return r.text;
+      }
+    });
+  }
   if (enabled.has("snapshot")) tools.snapshot = tool({
     description: '\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u0438\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441 \u043C\u0435\u0442\u043A\u0430\u043C\u0438 \u0432\u0440\u043E\u0434\u0435 [a12] (\u043A\u043D\u043E\u043F\u043A\u0438, \u0441\u0441\u044B\u043B\u043A\u0438, \u043F\u043E\u043B\u044F) \u0438 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043A\u0438. mode="all" \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0435\u0442 \u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B; window="all" \u2014 \u0432\u0441\u044E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u0430 \u043D\u0435 \u0442\u043E\u043B\u044C\u043A\u043E \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430.',
     inputSchema: external_exports.object({ mode: external_exports.enum(["interactive", "all"]).optional(), window: external_exports.enum(["near", "all"]).optional() }),
@@ -37494,12 +37518,12 @@ function readTools(enabled, page, notes) {
   });
   return tools;
 }
-function buildChatTools(profile, page, notes) {
-  return readTools(new Set(profile.tools.filter((t) => CHAT_TOOLS.includes(t))), page, notes);
+function buildChatTools(profile, page, notes, images = {}) {
+  return readTools(new Set(profile.tools.filter((t) => CHAT_TOOLS.includes(t) || t === "screenshot")), page, notes, images);
 }
 function buildAgentTools(profile, ctx) {
   const enabled = /* @__PURE__ */ new Set([...profile.tools.filter((t) => !NOT_YET.includes(t)), "done", "ask_user"]);
-  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes);
+  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes, { vision: ctx.vision, screenshots: ctx.screenshots });
   const page = async (name5, args) => {
     const target = await ctx.tabs.current();
     return (await target[name5].call(target, args)).text;
@@ -37617,6 +37641,28 @@ function elideOldPages(messages, keep = 3) {
     return { ...msg, content: msg.content.map((part, j) => drop.has(`${i}:${j}`) ? { ...part, output: { ...part.output, type: "text", value: ELIDED } } : part) };
   });
 }
+
+// src/agent/screenshots.ts
+var ScreenshotStore = class {
+  #latest = null;
+  put(base64Jpeg) {
+    this.#latest = base64Jpeg;
+  }
+  inject(messages) {
+    if (!this.#latest) return messages;
+    let at = -1;
+    messages.forEach((m, i) => {
+      const msg = m;
+      if (msg.role === "tool" && Array.isArray(msg.content) && msg.content.some((p) => p.toolName === "screenshot")) at = i;
+    });
+    if (at < 0) return messages;
+    const image = { role: "user", content: [
+      { type: "text", text: "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0447\u0430\u0441\u0442\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439):" },
+      { type: "image", image: this.#latest, mediaType: "image/jpeg" }
+    ] };
+    return [...messages.slice(0, at + 1), image, ...messages.slice(at + 1)];
+  }
+};
 
 // src/background/prompts.ts
 var PromptBroker = class {
@@ -39801,6 +39847,24 @@ ${diff}` : head;
       return { head: `\u0421\u0435\u0442\u044C \xB7 ${this.session.frames.main().url}`, body: summarizeNetwork({ ...this.diagnostics.network(), since: this.diagnostics.collectedSince }), notices: [] };
     });
   }
+  /** The visible part of the page as JPEG, at most 1280 px wide. */
+  async screenshot() {
+    let image = "";
+    const result = await this.run(async () => {
+      const m = await this.session.cdp.send("Page.getLayoutMetrics");
+      const v = m.cssLayoutViewport;
+      const scale = Math.min(1, 1280 / Math.max(1, v.clientWidth));
+      const { data } = await this.session.cdp.send(
+        "Page.captureScreenshot",
+        { format: "jpeg", quality: 70, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } },
+        void 0,
+        2e4
+      );
+      image = data;
+      return `\u0441\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0441\u0434\u0435\u043B\u0430\u043D: ${Math.round(v.clientWidth * scale)}\xD7${Math.round(v.clientHeight * scale)}, \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D \u043A \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C\u0443 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044E`;
+    });
+    return image ? { ...result, image } : result;
+  }
   /** Checks of the visible page for common bugs; each section says what it found, or that it found nothing. */
   pageChecks() {
     return this.run(async () => {
@@ -40118,6 +40182,8 @@ function createAgentSession(deps) {
       close: (id) => tabs.close(id)
     },
     notes: deps.notes ?? NO_NOTES,
+    vision: deps.vision,
+    screenshots: deps.screenshots,
     ask: async ({ question, kind }) => {
       const answer = await deps.ask({ kind, text: question });
       if (kind === "takeover") return answer === "done" ? "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0441\u0434\u0435\u043B\u0430\u043B \u044D\u0442\u043E\u0442 \u0448\u0430\u0433 \u0438 \u0432\u0435\u0440\u043D\u0443\u043B \u0432\u043A\u043B\u0430\u0434\u043A\u0443." : "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u043C\u0435\u043D\u0438\u043B \u044D\u0442\u043E\u0442 \u0448\u0430\u0433: \u043D\u0435 \u043F\u044B\u0442\u0430\u0439\u0442\u0435\u0441\u044C \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u0435\u0433\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u043C.";
@@ -40253,6 +40319,8 @@ var ChatRunner = class {
       handle ??= this.#deps.page(tabId);
       return handle.then((h) => h.tools, (error62) => unavailable(error62 instanceof Error ? error62.message : String(error62)));
     };
+    const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes("vision");
+    const screenshots = new ScreenshotStore();
     const agentMode = conversation.mode === "agent" && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== void 0;
     const conversationId = conversation.id;
     const agent = agentMode ? createAgentSession({
@@ -40269,9 +40337,11 @@ var ChatRunner = class {
       readSettings: this.#deps.settings,
       readPermission: async () => (await getConversation(conversationId))?.permission ?? conversation.permission,
       memory: this.#tabMemory.get(conversationId) ?? this.#tabMemory.set(conversationId, { members: /* @__PURE__ */ new Set(), groupId: null }).get(conversationId),
-      ask: (prompt) => this.#broker.ask({ ...prompt, conversationId }, run.controller.signal)
+      ask: (prompt) => this.#broker.ask({ ...prompt, conversationId }, run.controller.signal),
+      vision,
+      screenshots
     }) : null;
-    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes) : {};
+    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, { vision, screenshots }) : {};
     const toolNames = Object.keys(tools);
     let steps = 0;
     let doneSummary = null;
@@ -40285,7 +40355,7 @@ var ChatRunner = class {
         messages: toModelMessages([...history, user]),
         signal: run.controller.signal,
         tools,
-        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: elideOldPages } : { maxSteps: CHAT_MAX_STEPS }
+        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(elideOldPages(m)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(m) }
       });
       for await (const part of parts) {
         if (part.type === "step") {
@@ -40404,7 +40474,8 @@ var runner = new ChatRunner({
   tabsApi: chrome.tabs,
   tabGroupsApi: chrome.tabGroups,
   notes: notesApi,
-  setSiteRule: (site, rule) => setSiteRule(site, rule)
+  setSiteRule: (site, rule) => setSiteRule(site, rule),
+  capabilities: (settings) => modelCapabilities(settings.ollamaUrl, settings.model)
 });
 var ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
 chrome.runtime.onConnect.addListener((port) => {
