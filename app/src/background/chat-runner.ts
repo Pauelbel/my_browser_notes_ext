@@ -206,7 +206,7 @@ export class ChatRunner {
     try {
       const parts = this.#deps.stream({
         settings, system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
-        messages: toModelMessages([...history, user]), signal: run.controller.signal, tools,
+        messages: toModelMessages([...history, user], Math.round(context * 0.5)), signal: run.controller.signal, tools,
         ...(agent
           ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, context))}
           : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(m)}),

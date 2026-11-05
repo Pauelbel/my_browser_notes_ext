@@ -3043,8 +3043,8 @@ var $ZodCheckMaxSize = /* @__PURE__ */ $constructor("$ZodCheckMaxSize", (inst, d
   (_a3 = inst._zod.def).when ?? (_a3.when = _whenHasSize);
   inst._zod.check = (payload) => {
     const input2 = payload.value;
-    const size = input2.size;
-    if (size <= def.maximum)
+    const size2 = input2.size;
+    if (size2 <= def.maximum)
       return;
     payload.issues.push({
       origin: getSizableOrigin(input2),
@@ -3063,8 +3063,8 @@ var $ZodCheckMinSize = /* @__PURE__ */ $constructor("$ZodCheckMinSize", (inst, d
   (_a3 = inst._zod.def).when ?? (_a3.when = _whenHasSize);
   inst._zod.check = (payload) => {
     const input2 = payload.value;
-    const size = input2.size;
-    if (size >= def.minimum)
+    const size2 = input2.size;
+    if (size2 >= def.minimum)
       return;
     payload.issues.push({
       origin: getSizableOrigin(input2),
@@ -3083,10 +3083,10 @@ var $ZodCheckSizeEquals = /* @__PURE__ */ $constructor("$ZodCheckSizeEquals", (i
   (_a3 = inst._zod.def).when ?? (_a3.when = _whenHasSize);
   inst._zod.check = (payload) => {
     const input2 = payload.value;
-    const size = input2.size;
-    if (size === def.size)
+    const size2 = input2.size;
+    if (size2 === def.size)
       return;
-    const tooBig = size > def.size;
+    const tooBig = size2 > def.size;
     payload.issues.push({
       origin: getSizableOrigin(input2),
       ...tooBig ? { code: "too_big", maximum: def.size } : { code: "too_small", minimum: def.size },
@@ -4137,14 +4137,14 @@ var $ZodDate = /* @__PURE__ */ $constructor("$ZodDate", (inst, def) => {
     return payload;
   };
 });
-function capSize(inst, size) {
+function capSize(inst, size2) {
   const caps = sizeCaps(inst._zod.def.checks);
   if (!caps.length)
     return;
   const cap = Math.min(...caps.map((c) => c[0]));
   const parse3 = inst._zod.parse;
   inst._zod.parse = (payload, ctx) => {
-    const n = size(payload.value);
+    const n = size2(payload.value);
     if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
       for (const [max, ch] of sizeCaps(inst._zod.def.checks)) {
         if (n > max && ch._zod.def.when(payload)) {
@@ -14760,9 +14760,9 @@ function generateNullableCheck(doc, ctx, schema, accessor, buildsValue = true) {
   doc.write(`}`);
   return outputVar;
 }
-function generateSizeGate(doc, schema, size) {
+function generateSizeGate(doc, schema, size2) {
   for (const [max, check2] of sizeCaps(schema._zod.def.checks)) {
-    doc.write(`if (${size} > ${numericOperand(max, check2._zod.def.check)}) return INVALID;`);
+    doc.write(`if (${size2} > ${numericOperand(max, check2._zod.def.check)}) return INVALID;`);
   }
 }
 function generateArrayCheck(doc, ctx, schema, accessor, buildsValue = true) {
@@ -15898,11 +15898,11 @@ function _minSize(minimum, params) {
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _size(size, params) {
+function _size(size2, params) {
   return new $ZodCheckSizeEquals({
     check: "size_equals",
     ...normalizeParams(params),
-    size
+    size: size2
   });
 }
 // @__NO_SIDE_EFFECTS__
@@ -19151,8 +19151,8 @@ var ZodFile = /* @__PURE__ */ $constructor("ZodFile", (inst, def) => {
   $ZodFile.init(inst, def);
   ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => fileProcessor(inst, ctx, json2, params);
-  inst.min = (size, params) => inst.check(_minSize(size, params));
-  inst.max = (size, params) => inst.check(_maxSize(size, params));
+  inst.min = (size2, params) => inst.check(_minSize(size2, params));
+  inst.max = (size2, params) => inst.check(_maxSize(size2, params));
   inst.mime = (types, params) => inst.check(_mime(Array.isArray(types) ? types : [types], params));
 });
 function file(params) {
@@ -21808,11 +21808,11 @@ async function downloadBlob(url2, options) {
 function filterNullable(...values) {
   return values.filter((value) => value != null);
 }
-var createIdGenerator = ({ prefix, size = 16, alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", separator = "-" } = {}) => {
+var createIdGenerator = ({ prefix, size: size2 = 16, alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", separator = "-" } = {}) => {
   const generator = () => {
     const alphabetLength = alphabet.length;
-    const chars = new Array(size);
-    for (let i = 0; i < size; i++) chars[i] = alphabet[Math.random() * alphabetLength | 0];
+    const chars = new Array(size2);
+    for (let i = 0; i < size2; i++) chars[i] = alphabet[Math.random() * alphabetLength | 0];
     return chars.join("");
   };
   if (prefix == null) return generator;
@@ -25258,7 +25258,7 @@ var GatewayImageModel = class GatewayImageModel2 {
   get provider() {
     return this.config.provider;
   }
-  async doGenerate({ prompt, n, size, aspectRatio, seed, files, mask, providerOptions, headers, abortSignal }) {
+  async doGenerate({ prompt, n, size: size2, aspectRatio, seed, files, mask, providerOptions, headers, abortSignal }) {
     const resolvedHeaders = this.config.headers ? await resolve(this.config.headers) : void 0;
     try {
       const { responseHeaders, value: responseBody } = await postJsonToApi({
@@ -25267,7 +25267,7 @@ var GatewayImageModel = class GatewayImageModel2 {
         body: {
           prompt,
           n,
-          ...size && { size },
+          ...size2 && { size: size2 },
           ...aspectRatio && { aspectRatio },
           ...seed && { seed },
           ...providerOptions && { providerOptions },
@@ -37171,7 +37171,7 @@ var OpenAICompatibleImageModel = class OpenAICompatibleImageModel2 {
       ...providerOptions[toCamelCase(this.providerOptionsKey)]
     };
   }
-  async doGenerate({ prompt, n, size, aspectRatio, seed, providerOptions, headers, abortSignal, files, mask }) {
+  async doGenerate({ prompt, n, size: size2, aspectRatio, seed, providerOptions, headers, abortSignal, files, mask }) {
     const warnings = [];
     if (aspectRatio != null) warnings.push({
       type: "unsupported",
@@ -37200,7 +37200,7 @@ var OpenAICompatibleImageModel = class OpenAICompatibleImageModel2 {
           image: await Promise.all(files.map((file2) => fileToBlob(file2))),
           mask: mask != null ? await fileToBlob(mask) : void 0,
           n,
-          size,
+          size: size2,
           ...args
         }),
         failedResponseHandler: createJsonErrorResponseHandler(this.config.errorStructure ?? defaultOpenAICompatibleErrorStructure),
@@ -37230,7 +37230,7 @@ var OpenAICompatibleImageModel = class OpenAICompatibleImageModel2 {
         model: this.modelId,
         prompt,
         n,
-        size,
+        size: size2,
         ...args
       },
       failedResponseHandler: createJsonErrorResponseHandler(this.config.errorStructure ?? defaultOpenAICompatibleErrorStructure),
@@ -37438,8 +37438,40 @@ ${role}`);
 
 // src/agent/history.ts
 var SENT_REPLIES = /* @__PURE__ */ new Set(["done", "stopped", "interrupted"]);
-function toModelMessages(messages) {
-  return messages.filter((m) => m.role === "user" || SENT_REPLIES.has(m.status) && m.text.trim() !== "").map((m) => ({ role: m.role, content: m.text }));
+var STEPS_MAX = 20;
+var SHORT_REPLY = 300;
+var LINE_REPLY = 120;
+function stepsLine(m) {
+  if (!m.steps?.length) return "";
+  const shown = m.steps.slice(0, STEPS_MAX).map((s) => `${s.name}${s.input ? ` ${s.input}` : ""}${s.status === "error" ? " (\u043E\u0448\u0438\u0431\u043A\u0430)" : ""}`);
+  const more = m.steps.length > STEPS_MAX ? ` \xB7 \u2026 \u0438 \u0435\u0449\u0451 ${m.steps.length - STEPS_MAX}` : "";
+  const end = m.status === "interrupted" ? " (\u043F\u0440\u0435\u0440\u0432\u0430\u043D\u043E)" : m.status === "stopped" ? " (\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E)" : "";
+  return `\u0428\u0430\u0433\u0438: ${shown.join(" \xB7 ")}${more}${end}`;
+}
+function replyContent(m) {
+  const steps = stepsLine(m);
+  if (!steps) return m.text;
+  return m.text.trim() ? `${m.text.trimEnd()}
+
+(${steps})` : steps;
+}
+var size = (messages) => Math.ceil(messages.reduce((sum, m) => sum + m.content.length, 0) / 4);
+function toModelMessages(messages, budgetTokens) {
+  const out = messages.filter((m) => m.role === "user" || SENT_REPLIES.has(m.status) && (m.text.trim() !== "" || Boolean(m.steps?.length))).map((m) => ({ role: m.role, content: m.role === "user" ? m.text : replyContent(m) }));
+  if (!budgetTokens || size(out) <= budgetTokens) return out;
+  const lastReply = out.map((m) => m.role).lastIndexOf("assistant");
+  const older = out.map((m, i) => m.role === "assistant" && i !== lastReply ? i : -1).filter((i) => i >= 0);
+  for (const [limit, mark] of [[SHORT_REPLY, "\u2026[\u043E\u0442\u0432\u0435\u0442 \u0441\u043E\u043A\u0440\u0430\u0449\u0451\u043D]"], [LINE_REPLY, "\u2026[\u0441\u043E\u043A\u0440\u0430\u0449\u0435\u043D\u043E]"]]) {
+    for (const i of older) {
+      if (size(out) <= budgetTokens) return out;
+      if (out[i].content.length > limit) out[i] = { ...out[i], content: `${out[i].content.slice(0, limit).trimEnd()}${mark}` };
+    }
+  }
+  for (const i of older) {
+    if (size(out) <= budgetTokens) return out;
+    out[i] = { ...out[i], content: "[\u043E\u0442\u0432\u0435\u0442 \u0441\u043A\u0440\u044B\u0442]" };
+  }
+  return out;
 }
 
 // src/llm/ollama.ts
@@ -40566,7 +40598,7 @@ var ChatRunner = class {
       const parts = this.#deps.stream({
         settings,
         system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
-        messages: toModelMessages([...history, user]),
+        messages: toModelMessages([...history, user], Math.round(context * 0.5)),
         signal: run.controller.signal,
         tools,
         ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(fitToContext(m, context)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(m) }
