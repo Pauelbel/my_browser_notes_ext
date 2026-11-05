@@ -11,7 +11,7 @@ const appDir = path.join(here, '..', '..');
 const wanted = process.argv.slice(2);
 const all = (await readdir(here)).filter(f => f.endsWith('.e2e.mjs')).map(f => f.replace('.e2e.mjs', '')).sort();
 // Scenarios that need the network or a model run only when named.
-const explicitOnly = new Set(['record', 'realsites', 'chat-tools']);
+const explicitOnly = new Set(['record', 'realsites', 'chat-tools', 'agent']);
 const names = wanted.length ? wanted : all.filter(n => !explicitOnly.has(n));
 
 if (!chromePath()) { console.log('SKIP: Google Chrome не найден (задайте CHROME_PATH)'); process.exit(0); }

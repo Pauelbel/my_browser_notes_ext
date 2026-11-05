@@ -39944,6 +39944,7 @@ var ChatRunner = class {
     const toolNames = Object.keys(tools);
     let steps = 0;
     let doneSummary = null;
+    let afterTool = false;
     const emitStep = (step) => this.#deps.emit({ type: "step", conversationId: reply.conversationId, messageId: reply.id, step });
     try {
       const parts = this.#deps.stream({
@@ -39975,10 +39976,16 @@ var ChatRunner = class {
             reply.steps[index] = { ...reply.steps[index], status: part.ok ? "done" : "error", summary: part.summary };
             emitStep(reply.steps[index]);
           }
+          afterTool = true;
           continue;
         }
-        if (part.type === "text") reply.text += part.delta;
-        else reply.reasoning += part.delta;
+        if (part.type === "text") {
+          if (afterTool && reply.text.trim() && part.delta.trim()) reply.text = `${reply.text.trimEnd()}
+
+`;
+          if (part.delta.trim()) afterTool = false;
+          reply.text += part.delta;
+        } else reply.reasoning += part.delta;
         this.#deps.emit({ type: "delta", conversationId: reply.conversationId, messageId: reply.id, text: reply.text, reasoning: reply.reasoning });
         if (now2() - savedAt >= saveEvery && !run.deleted) {
           savedAt = now2();

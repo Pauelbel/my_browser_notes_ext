@@ -467,3 +467,18 @@ test('в режиме chat инструментов действий нет', as
   assert.ok(!('click' in (model.calls[0].tools ?? {})));
   assert.equal(model.calls[0].maxSteps, 5);
 });
+
+test('текст до и после вызова инструмента разделён пустой строкой', async () => {
+  const stream: StreamReply = async function* (request) {
+    yield {type: 'text', delta: 'Сейчас посмотрю.'};
+    yield {type: 'tool-call', id: 't', name: 'snapshot', input: {}};
+    await (request.tools!.snapshot as any).execute({}, {toolCallId: 't', messages: []});
+    yield {type: 'tool-result', id: 't', ok: true, summary: 'ok'};
+    yield {type: 'text', delta: 'Готово.'};
+  };
+  const {page} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream, settings: async () => SETTINGS, emit: e => events.push(e), page});
+  await chat.send({...send('что там?'), tabId: 5});
+  assert.equal((events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.text, 'Сейчас посмотрю.\n\nГотово.');
+});
