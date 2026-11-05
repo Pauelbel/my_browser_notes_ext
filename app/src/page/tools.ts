@@ -11,10 +11,12 @@ import {startWatch, type Evidence} from './evidence.ts';
 import {click, hover, pressKey, wheel, watchDialog, KEYS, type DialogInfo, type KeyName} from './input.ts';
 import {focusTarget, isChecked, isFocused, isSelect, selectOption, targetFacts, typeInto} from './act.ts';
 import {diffLines, renderDiff} from './diff.ts';
-import {render} from './render.ts';
+import {render, renderLine} from './render.ts';
 import {waitForReady} from './readiness.ts';
 import {probeEval} from './probe.ts';
 import {Diagnostics, summarizeConsole, summarizeNetwork} from './diagnostics.ts';
+import {findOverlaps, findUnnamed} from './checks.ts';
+import type {Box} from './layout.ts';
 import type {ONode} from './outline.ts';
 import {classify, USER_STEP, type Category} from './classify.ts';
 import {isSecretField} from './masking.ts';
@@ -38,6 +40,7 @@ const ORDER: Category[] = ['pay', 'access', 'secret', 'captcha', 'delete', 'logo
 
 export const PAGE_START = '<<<page-content>>>';
 const NAVIGATION_TIMEOUT_MS = 15000;
+const LINKS_MAX = 40;
 const WAIT_POLL_MS = 250;
 const fold = (s: string) => s.toLocaleLowerCase('ru').replaceAll('ё', 'е');
 const flat = (nodes: ONode[]): ONode[] => nodes.flatMap(n => [n, ...flat(n.children)]);
@@ -404,6 +407,41 @@ export class PageTools {
     return this.run(async () => {
       await this.#fresh(args.reload);
       return {head: `Сеть · ${this.session.frames.main().url}`, body: summarizeNetwork({...this.diagnostics.network(), since: this.diagnostics.collectedSince}), notices: []};
+    });
+  }
+
+  /** Checks of the visible page for common bugs; each section says what it found, or that it found nothing. */
+  pageChecks(): Promise<ToolResult> {
+    return this.run(async () => {
+      const main = this.session.frames.main().frameId;
+      const probe = <T>(expr: string, timeout?: number) => probeEval<T>(this.session, main, this.observer.probes, expr, timeout);
+      const {roots} = await this.observer.observe();
+      const [broken, noAlt, overflow, controls, links] = await Promise.all([
+        probe<{src: string; alt: string}[]>('__assistant.brokenImages()'),
+        probe<string[]>('__assistant.imagesWithoutAlt()'),
+        probe<{pageOverflow: number; width: number; elements: {text: string; right: number}[]}>('__assistant.overflow()'),
+        probe<{label: string; box: Box}[]>('__assistant.controls()'),
+        probe<string[]>(`__assistant.sameSiteLinks(${LINKS_MAX})`),
+      ]);
+      const badLinks = links.length ? await probe<{url: string; status?: number; error?: string}[]>(`__assistant.checkLinks(${JSON.stringify(links)}, 6, 5000)`, 60000) : [];
+      const unnamed = findUnnamed(roots);
+      const overlaps = findOverlaps(controls.map((c, i) => ({ref: String(i), label: c.label, box: c.box})));
+      const lines: string[] = [];
+      lines.push(broken.length ? `Битые картинки: ${broken.length}\n${broken.map(b => `- ${b.src}${b.alt ? ` (alt «${b.alt}»)` : ''}`).join('\n')}` : 'Битые картинки: нет');
+      lines.push(badLinks.length
+        ? `Ссылки этого сайта с ошибкой: ${badLinks.length} из ${links.length} проверенных\n${badLinks.map(b => `- ${b.status ?? b.error} · ${b.url}`).join('\n')}`
+        : `Ссылки этого сайта: проверено ${links.length}${links.length >= LINKS_MAX ? ' (первые)' : ''}, ошибок нет`);
+      lines.push(unnamed.length
+        ? `Элементы без подписи (не прочитает экранный диктор и не поймёт модель): ${unnamed.length}\n${unnamed.slice(0, 20).map(n => { if (n.backendNodeId !== undefined) this.refs.assign(n); return `- ${renderLine(n)}`; }).join('\n')}`
+        : 'Элементы без подписи: нет');
+      lines.push(noAlt.length ? `Картинки без alt: ${noAlt.length}\n${noAlt.map(s => `- ${s}`).join('\n')}` : 'Картинки без alt: нет');
+      lines.push(overflow.pageOverflow > 1 || overflow.elements.length
+        ? `Переполнение по ширине: страница шире окна (${overflow.width} px) на ${Math.max(0, overflow.pageOverflow)} px\n${overflow.elements.map(e => `- «${e.text}» до ${e.right} px`).join('\n')}`
+        : 'Переполнение по ширине: нет');
+      lines.push(overlaps.length
+        ? `Перекрывающиеся элементы: ${overlaps.length}\n${overlaps.map(([a, b]) => `- «${controls[Number(a)].label}» и «${controls[Number(b)].label}»`).join('\n')}`
+        : 'Перекрывающиеся элементы: нет');
+      return {head: `Проверки страницы · ${this.session.frames.main().url}`, body: lines.join('\n\n'), notices: []};
     });
   }
 

@@ -1,0 +1,15 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"><title>Страница с багами</title>
+<style>.wide{width:2000px;background:#fee}.stack{position:relative;height:50px}.stack button{position:absolute;left:0;top:0}</style></head><body>
+<h1>Страница с багами</h1>
+<p><img src="/nope.png" alt="Логотип" width="80" height="40"> <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="20" height="20"></p>
+<p><a href="basic.html">Первая</a> · <a href="basic2.html">Вторая</a> · <a href="form.html">Форма</a> · <a href="/missing">Сломанная ссылка</a></p>
+<p><button><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 2L14 14M14 2L2 14" stroke="black"/></svg></button></p>
+<div class="wide">Очень широкий блок, который вылезает за правый край окна</div>
+<div class="stack"><button>Нижняя кнопка</button><button>Верхняя кнопка</button></div>
+<script>
+for (let i = 0; i < 3; i++) console.error('Не удалось загрузить настройки');
+fetch('/missing-api').catch(() => {});
+fetch('http://127.0.0.1:9/x').catch(() => {});
+setTimeout(() => { undefinedFunctionCall(); }, 0);
+</script>
+</body></html>

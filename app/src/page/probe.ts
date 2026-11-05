@@ -1,6 +1,7 @@
 // The layer's only script in pages, run in an isolated world named "assistant": page scripts cannot see or change it.
 // It counts DOM mutations (for readiness and action evidence) and answers small questions about elements.
 import type {PageSession} from './session.ts';
+import {CHECKS_SOURCE} from './checks.ts';
 
 export const WORLD = 'assistant';
 export const OVERLAY_ATTR = 'data-assistant-overlay';
@@ -36,6 +37,7 @@ export const PROBE_SOURCE = `(() => {
     return layer;
   };
   globalThis.__assistant = {
+    ${CHECKS_SOURCE}
     highlightText(query, name) {
       const want = fold(query); if (!want) return 0;
       const ranges = [];
@@ -106,11 +108,11 @@ export async function ensureProbe(session: PageSession, frameId: string, cache: 
 }
 
 /** Evaluates `expression` in the probe's world of a frame and returns its value. */
-export async function probeEval<T>(session: PageSession, frameId: string, cache: Map<string, {loaderId: string; contextId: number}>, expression: string): Promise<T> {
+export async function probeEval<T>(session: PageSession, frameId: string, cache: Map<string, {loaderId: string; contextId: number}>, expression: string, timeoutMs?: number): Promise<T> {
   const contextId = await ensureProbe(session, frameId, cache);
   const frame = session.frames.get(frameId);
   const result = await session.cdp.send<{result: {value: T}; exceptionDetails?: {text: string}}>('Runtime.evaluate',
-    {expression, contextId, returnByValue: true, awaitPromise: true}, frame?.sessionId);
+    {expression, contextId, returnByValue: true, awaitPromise: true}, frame?.sessionId, timeoutMs);
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
   return result.result.value;
 }

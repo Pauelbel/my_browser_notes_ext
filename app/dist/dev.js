@@ -120,7 +120,7 @@ async function attachTab(tabId, api = chrome.debugger) {
 }
 
 // src/page/frames.ts
-var DOMAINS = ["Page.enable", "DOM.enable", "Accessibility.enable", "Runtime.enable", "Network.enable"];
+var DOMAINS = ["Page.enable", "DOM.enable", "Accessibility.enable", "Runtime.enable", "Network.enable", "Log.enable"];
 var Frames = class _Frames {
   #cdp;
   #frames = /* @__PURE__ */ new Map();
@@ -606,8 +606,8 @@ function buildOutline(capture2) {
 var VALUE_MAX = 200;
 var KEEP_IN_INTERACTIVE = /* @__PURE__ */ new Set(["heading", "Iframe", "dialog", "alertdialog"]);
 function quote(text, max = Infinity) {
-  const cut = text.length > max ? `${text.slice(0, max)}\u2026` : text;
-  return `"${cut.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+  const cut2 = text.length > max ? `${text.slice(0, max)}\u2026` : text;
+  return `"${cut2.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 function renderLine(n) {
   if (n.kind === "text") return `text ${quote(n.name)}`;
@@ -673,6 +673,90 @@ function render(roots, refs, opts) {
   return { body: lines.join("\n"), notices, shown };
 }
 
+// src/page/checks.ts
+function findUnnamed(roots) {
+  const out = [];
+  const walk = (nodes) => {
+    for (const n of nodes) {
+      if (n.interactive && !n.name.trim() && n.role !== "clickable") out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(roots);
+  return out;
+}
+var area = (b) => Math.max(0, b.width) * Math.max(0, b.height);
+function findOverlaps(items, limit = 10) {
+  const pairs = [];
+  for (let i = 0; i < items.length && pairs.length < limit; i++) {
+    for (let j = i + 1; j < items.length && pairs.length < limit; j++) {
+      const a = items[i].box, b = items[j].box;
+      const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+      if (w <= 0 || h <= 0) continue;
+      const smaller = Math.min(area(a), area(b));
+      if (smaller > 0 && w * h / smaller > 0.3) pairs.push([items[i].ref, items[j].ref]);
+    }
+  }
+  return pairs;
+}
+var CHECKS_SOURCE = `
+  brokenImages() {
+    return [...document.images].filter(i => i.getClientRects().length && i.complete && i.naturalWidth === 0)
+      .slice(0, 20).map(i => ({src: i.currentSrc || i.src, alt: i.getAttribute('alt') || ''}));
+  },
+  imagesWithoutAlt() {
+    return [...document.images].filter(i => i.getClientRects().length && !i.hasAttribute('alt')).slice(0, 20).map(i => i.currentSrc || i.src);
+  },
+  overflow() {
+    const width = document.documentElement.clientWidth;
+    const found = [];
+    for (const el of document.body ? document.body.querySelectorAll('*') : []) {
+      if (found.length >= 10) break;
+      const r = el.getBoundingClientRect();
+      if (r.right > width + 1 && r.width > 0 && !found.some(f => f.el.contains(el)) && getComputedStyle(el).position !== 'fixed') {
+        found.push({el, text: (el.innerText || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/\\\\s+/g, ' ').slice(0, 60), right: Math.round(r.right)});
+      }
+    }
+    return {pageOverflow: document.documentElement.scrollWidth - width, width, elements: found.map(({text, right}) => ({text, right}))};
+  },
+  controls() {
+    const sel = 'button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=link], [onclick]';
+    return [...document.querySelectorAll(sel)].slice(0, 300).map(el => ({el, r: el.getBoundingClientRect()}))
+      .filter(({el, r}) => r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden')
+      .map(({el, r}) => ({label: (el.innerText || el.value || el.getAttribute('aria-label') || el.tagName.toLowerCase()).replace(/\\\\s+/g, ' ').trim().slice(0, 50),
+        box: {x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height}}));
+  },
+  sameSiteLinks(limit) {
+    const seen = new Set();
+    for (const a of document.querySelectorAll('a[href]')) {
+      const u = new URL(a.href, location.href);
+      if (u.origin !== location.origin || !/^https?:$/.test(u.protocol)) continue;
+      u.hash = '';
+      if (u.href !== location.href.split('#')[0]) seen.add(u.href);
+      if (seen.size >= limit) break;
+    }
+    return [...seen];
+  },
+  async checkLinks(urls, parallel, timeoutMs) {
+    const bad = [];
+    const one = async url => {
+      const attempt = async method => {
+        const c = new AbortController(); const t = setTimeout(() => c.abort(), timeoutMs);
+        try { return (await fetch(url, {method, redirect: 'follow', signal: c.signal, credentials: 'same-origin'})).status; } finally { clearTimeout(t); }
+      };
+      try {
+        let status = await attempt('HEAD');
+        if (status === 405 || status === 501) status = await attempt('GET');
+        if (status >= 400) bad.push({url, status});
+      } catch (e) { bad.push({url, error: e.name === 'AbortError' ? '\u0442\u0430\u0439\u043C\u0430\u0443\u0442' : String(e.message || e)}); }
+    };
+    const queue = [...urls];
+    await Promise.all(Array.from({length: parallel}, async () => { while (queue.length) await one(queue.shift()); }));
+    return bad;
+  },
+`;
+
 // src/page/probe.ts
 var WORLD = "assistant";
 var OVERLAY_ATTR2 = "data-assistant-overlay";
@@ -707,6 +791,7 @@ var PROBE_SOURCE = `(() => {
     return layer;
   };
   globalThis.__assistant = {
+    ${CHECKS_SOURCE}
     highlightText(query, name) {
       const want = fold(query); if (!want) return 0;
       const ranges = [];
@@ -773,13 +858,14 @@ async function ensureProbe(session, frameId, cache) {
   cache.set(frameId, { loaderId: frame.loaderId, contextId: executionContextId });
   return executionContextId;
 }
-async function probeEval(session, frameId, cache, expression) {
+async function probeEval(session, frameId, cache, expression, timeoutMs) {
   const contextId = await ensureProbe(session, frameId, cache);
   const frame = session.frames.get(frameId);
   const result = await session.cdp.send(
     "Runtime.evaluate",
     { expression, contextId, returnByValue: true, awaitPromise: true },
-    frame?.sessionId
+    frame?.sessionId,
+    timeoutMs
   );
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
   return result.result.value;
@@ -1036,12 +1122,12 @@ async function resolveTarget(session, refs, ref, probes) {
 
 // src/page/geometry.ts
 function quadArea(q) {
-  let area = 0;
+  let area2 = 0;
   for (let i = 0; i < 4; i++) {
     const j = (i + 1) % 4;
-    area += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
+    area2 += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
   }
-  return Math.abs(area / 2);
+  return Math.abs(area2 / 2);
 }
 function visibleCenter(q, viewport) {
   const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
@@ -1432,6 +1518,136 @@ function renderDiff(d, max = 30) {
   return [...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n");
 }
 
+// src/page/diagnostics.ts
+var GROUPS_MAX = 30;
+var TEXT_MAX = 300;
+function argText(arg) {
+  if (arg.value !== void 0) return typeof arg.value === "string" ? arg.value : JSON.stringify(arg.value);
+  return arg.description ?? arg.type ?? "";
+}
+var Diagnostics = class {
+  since = Date.now();
+  #since = this.since;
+  #limit;
+  #console = [];
+  #network = [];
+  #droppedConsole = 0;
+  #droppedNetwork = 0;
+  #requests = /* @__PURE__ */ new Map();
+  #off;
+  constructor(cdp, limit = 300) {
+    this.#limit = limit;
+    this.#off = cdp.on((method, params, sessionId) => this.#event(method, params, sessionId));
+  }
+  get collectedSince() {
+    return this.#since;
+  }
+  console() {
+    return { entries: [...this.#console], dropped: this.#droppedConsole };
+  }
+  network() {
+    return { entries: [...this.#network], dropped: this.#droppedNetwork };
+  }
+  reset() {
+    this.#console = [];
+    this.#network = [];
+    this.#droppedConsole = 0;
+    this.#droppedNetwork = 0;
+    this.#since = Date.now();
+  }
+  stop() {
+    this.#off();
+  }
+  #pushConsole(entry) {
+    this.#console.push(entry);
+    if (this.#console.length > this.#limit) {
+      this.#console.shift();
+      this.#droppedConsole++;
+    }
+  }
+  #pushNetwork(entry) {
+    this.#network.push(entry);
+    if (this.#network.length > this.#limit) {
+      this.#network.shift();
+      this.#droppedNetwork++;
+    }
+  }
+  #event(method, params, sessionId) {
+    const at = Date.now();
+    if (method === "Runtime.consoleAPICalled") {
+      const level = params.type === "error" || params.type === "assert" ? "error" : params.type === "warning" ? "warning" : null;
+      if (!level) return;
+      const frame = params.stackTrace?.callFrames?.[0];
+      this.#pushConsole({ level, source: "console", text: (params.args ?? []).map(argText).join(" ").trim(), url: frame?.url, line: frame ? frame.lineNumber + 1 : void 0, at });
+    } else if (method === "Runtime.exceptionThrown") {
+      const d = params.exceptionDetails ?? {};
+      this.#pushConsole({ level: "error", source: "exception", text: (d.exception?.description ?? d.text ?? "").split("\n")[0], url: d.url, line: d.lineNumber !== void 0 ? d.lineNumber + 1 : void 0, at });
+    } else if (method === "Log.entryAdded") {
+      const e = params.entry ?? {};
+      if (e.level !== "error" && e.level !== "warning") return;
+      this.#pushConsole({ level: e.level, source: "log", text: e.text ?? "", url: e.url, line: e.lineNumber !== void 0 ? e.lineNumber + 1 : void 0, at });
+    } else if (method === "Network.requestWillBeSent") {
+      this.#requests.set(`${sessionId ?? ""}|${params.requestId}`, { method: params.request?.method ?? "GET", url: params.request?.url ?? "", type: params.type });
+    } else if (method === "Network.responseReceived") {
+      const status = params.response?.status ?? 0;
+      if (status < 400) return;
+      const req = this.#requests.get(`${sessionId ?? ""}|${params.requestId}`);
+      this.#pushNetwork({ method: req?.method ?? "GET", url: params.response?.url ?? req?.url ?? "", status, type: params.type ?? req?.type, at });
+    } else if (method === "Network.loadingFailed") {
+      if (params.canceled) return;
+      const req = this.#requests.get(`${sessionId ?? ""}|${params.requestId}`);
+      const reason = params.corsErrorStatus?.corsError ? `CORS: ${params.corsErrorStatus.corsError}` : params.blockedReason ? `\u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D: ${params.blockedReason}` : params.errorText;
+      this.#pushNetwork({ method: req?.method ?? "GET", url: req?.url ?? "", error: reason, type: params.type ?? req?.type, at });
+    }
+  }
+};
+var clock = (t) => new Date(t).toTimeString().slice(0, 8);
+var footer = (since) => `\u0441\u043E\u0431\u0440\u0430\u043D\u043E \u0441 ${clock(since)} (\u0441 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F \u043A \u0432\u043A\u043B\u0430\u0434\u043A\u0435); \u043E\u0448\u0438\u0431\u043A\u0438 \u0434\u043E \u044D\u0442\u043E\u0433\u043E \u043D\u0435 \u0432\u0438\u0434\u043D\u044B \u2014 \u0447\u0442\u043E\u0431\u044B \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0441 \u043D\u0430\u0447\u0430\u043B\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438, \u0432\u044B\u0437\u043E\u0432\u0438\u0442\u0435 \u0441 reload: true`;
+var cut = (s) => s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX - 1)}\u2026` : s;
+function grouped(items, key) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    const k = key(item);
+    const g = groups.get(k);
+    if (g) g.count++;
+    else groups.set(k, { item, count: 1 });
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
+}
+function summarizeConsole(d, level) {
+  const entries = d.entries.filter((e) => level === "all" || e.level === level);
+  const lines = [footer(d.since)];
+  if (!entries.length) {
+    lines.push("\u041E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442.");
+    return lines.join("\n");
+  }
+  const groups = grouped(entries, (e) => `${e.level}|${e.text}`);
+  lines.push(`\u0417\u0430\u043F\u0438\u0441\u0435\u0439: ${entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
+  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
+    const where = item.url ? ` \xB7 ${item.url}${item.line ? `:${item.line}` : ""}` : "";
+    lines.push(`${item.level === "error" ? "\u043E\u0448\u0438\u0431\u043A\u0430" : "\u043F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u0435"}${count > 1 ? ` \xD7${count}` : ""}${item.source === "exception" ? " (\u043D\u0435\u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u043D\u043D\u043E\u0435 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435)" : ""} \xB7 ${cut(item.text)}${where}`);
+  }
+  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX} \u0440\u0430\u0437\u043D\u044B\u0445 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u0439.`);
+  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
+  return lines.join("\n");
+}
+function summarizeNetwork(d) {
+  const lines = [footer(d.since)];
+  if (!d.entries.length) {
+    lines.push("\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435\u0442.");
+    return lines.join("\n");
+  }
+  const base = (url) => url.split(/[?#]/)[0];
+  const groups = grouped(d.entries, (e) => `${e.method}|${e.status ?? e.error}|${base(e.url)}`);
+  lines.push(`\u0423\u043F\u0430\u0432\u0448\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432: ${d.entries.length}, \u0440\u0430\u0437\u043D\u044B\u0445: ${groups.length}.`);
+  for (const { item, count } of groups.slice(0, GROUPS_MAX)) {
+    lines.push(`${item.method} ${item.status ?? item.error}${count > 1 ? ` \xD7${count}` : ""} \xB7 ${cut(base(item.url))}${item.type ? ` (${item.type.toLowerCase()})` : ""}`);
+  }
+  if (groups.length > GROUPS_MAX) lines.push(`\u2026 \u0438 \u0435\u0449\u0451 ${groups.length - GROUPS_MAX}.`);
+  if (d.dropped) lines.push(`\u0421\u0442\u0430\u0440\u044B\u0435 \u0437\u0430\u043F\u0438\u0441\u0438 \u0432\u044B\u0442\u0435\u0441\u043D\u0435\u043D\u044B \u043B\u0438\u043C\u0438\u0442\u043E\u043C: ${d.dropped}.`);
+  return lines.join("\n");
+}
+
 // src/page/classify.ts
 function vocabulary(words) {
   const parts = words.map((w) => w.endsWith("*") ? `${w.slice(0, -1).replace(/\s+/g, "\\s+")}\\p{L}*` : w.replace(/\s+/g, "\\s+"));
@@ -1563,6 +1779,7 @@ var CATEGORY_TEXT = {
 var ORDER = ["pay", "access", "secret", "captcha", "delete", "logout", "send", "submit"];
 var PAGE_START = "<<<page-content>>>";
 var NAVIGATION_TIMEOUT_MS = 15e3;
+var LINKS_MAX = 40;
 var WAIT_POLL_MS = 250;
 var fold3 = (s) => s.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
 var flat = (nodes) => nodes.flatMap((n) => [n, ...flat(n.children)]);
@@ -1594,6 +1811,7 @@ var PageTools = class {
   observer;
   budget;
   highlighter;
+  diagnostics;
   /** Highlights made in this session, by page address, so going back to a page shows them again. */
   #highlights = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
@@ -1606,6 +1824,7 @@ var PageTools = class {
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
     this.highlighter = new Highlighter(session, this.observer.probes);
+    this.diagnostics = new Diagnostics(session.cdp);
     session.cdp.on((method, _params, sessionId) => {
       if (method === "Page.loadEventFired" && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300);
     });
@@ -1908,6 +2127,60 @@ ${diff}` : head;
       }
     });
   }
+  /** Optionally reloads the page so collection covers it from the start of loading. */
+  async #fresh(reload) {
+    if (!reload) return;
+    this.diagnostics.reset();
+    const r = await this.navigate({ action: "reload" });
+    if (!r.ok) throw new PageError("INTERNAL", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443: ${r.text}`);
+  }
+  consoleLog(args = {}) {
+    return this.run(async () => {
+      await this.#fresh(args.reload);
+      return { head: `\u041A\u043E\u043D\u0441\u043E\u043B\u044C \xB7 ${this.session.frames.main().url}`, body: summarizeConsole({ ...this.diagnostics.console(), since: this.diagnostics.collectedSince }, args.level ?? "all"), notices: [] };
+    });
+  }
+  networkLog(args = {}) {
+    return this.run(async () => {
+      await this.#fresh(args.reload);
+      return { head: `\u0421\u0435\u0442\u044C \xB7 ${this.session.frames.main().url}`, body: summarizeNetwork({ ...this.diagnostics.network(), since: this.diagnostics.collectedSince }), notices: [] };
+    });
+  }
+  /** Checks of the visible page for common bugs; each section says what it found, or that it found nothing. */
+  pageChecks() {
+    return this.run(async () => {
+      const main = this.session.frames.main().frameId;
+      const probe = (expr, timeout) => probeEval(this.session, main, this.observer.probes, expr, timeout);
+      const { roots } = await this.observer.observe();
+      const [broken, noAlt, overflow, controls, links] = await Promise.all([
+        probe("__assistant.brokenImages()"),
+        probe("__assistant.imagesWithoutAlt()"),
+        probe("__assistant.overflow()"),
+        probe("__assistant.controls()"),
+        probe(`__assistant.sameSiteLinks(${LINKS_MAX})`)
+      ]);
+      const badLinks = links.length ? await probe(`__assistant.checkLinks(${JSON.stringify(links)}, 6, 5000)`, 6e4) : [];
+      const unnamed = findUnnamed(roots);
+      const overlaps = findOverlaps(controls.map((c, i) => ({ ref: String(i), label: c.label, box: c.box })));
+      const lines = [];
+      lines.push(broken.length ? `\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: ${broken.length}
+${broken.map((b) => `- ${b.src}${b.alt ? ` (alt \xAB${b.alt}\xBB)` : ""}`).join("\n")}` : "\u0411\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438: \u043D\u0435\u0442");
+      lines.push(badLinks.length ? `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430 \u0441 \u043E\u0448\u0438\u0431\u043A\u043E\u0439: ${badLinks.length} \u0438\u0437 ${links.length} \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0445
+${badLinks.map((b) => `- ${b.status ?? b.error} \xB7 ${b.url}`).join("\n")}` : `\u0421\u0441\u044B\u043B\u043A\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0430\u0439\u0442\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E ${links.length}${links.length >= LINKS_MAX ? " (\u043F\u0435\u0440\u0432\u044B\u0435)" : ""}, \u043E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442`);
+      lines.push(unnamed.length ? `\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 (\u043D\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0435\u0442 \u044D\u043A\u0440\u0430\u043D\u043D\u044B\u0439 \u0434\u0438\u043A\u0442\u043E\u0440 \u0438 \u043D\u0435 \u043F\u043E\u0439\u043C\u0451\u0442 \u043C\u043E\u0434\u0435\u043B\u044C): ${unnamed.length}
+${unnamed.slice(0, 20).map((n) => {
+        if (n.backendNodeId !== void 0) this.refs.assign(n);
+        return `- ${renderLine(n)}`;
+      }).join("\n")}` : "\u042D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0438: \u043D\u0435\u0442");
+      lines.push(noAlt.length ? `\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: ${noAlt.length}
+${noAlt.map((s) => `- ${s}`).join("\n")}` : "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0431\u0435\u0437 alt: \u043D\u0435\u0442");
+      lines.push(overflow.pageOverflow > 1 || overflow.elements.length ? `\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0448\u0438\u0440\u0435 \u043E\u043A\u043D\u0430 (${overflow.width} px) \u043D\u0430 ${Math.max(0, overflow.pageOverflow)} px
+${overflow.elements.map((e) => `- \xAB${e.text}\xBB \u0434\u043E ${e.right} px`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043F\u043E \u0448\u0438\u0440\u0438\u043D\u0435: \u043D\u0435\u0442");
+      lines.push(overlaps.length ? `\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: ${overlaps.length}
+${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${controls[Number(b)].label}\xBB`).join("\n")}` : "\u041F\u0435\u0440\u0435\u043A\u0440\u044B\u0432\u0430\u044E\u0449\u0438\u0435\u0441\u044F \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B: \u043D\u0435\u0442");
+      return { head: `\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \xB7 ${this.session.frames.main().url}`, body: lines.join("\n\n"), notices: [] };
+    });
+  }
   highlight(args) {
     return this.run(async () => {
       const color = checkColor(args.color);
@@ -2000,6 +2273,7 @@ ${diff}` : head;
   }
   dispose() {
     this.observer.network.stop();
+    this.diagnostics.stop();
   }
 };
 
