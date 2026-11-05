@@ -482,3 +482,17 @@ test('текст до и после вызова инструмента разд
   await chat.send({...send('что там?'), tabId: 5});
   assert.equal((events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.text, 'Сейчас посмотрю.\n\nГотово.');
 });
+
+test('итог done не теряется за текстом по ходу работы, частичный исход назван', async () => {
+  const stream: StreamReply = async function* (request) {
+    yield {type: 'text', delta: 'Сначала посмотрю страницу.'};
+    yield {type: 'tool-call', id: 'd', name: 'done', input: {outcome: 'partial', summary: 'Удалил один черновик из двух.'}};
+    await (request.tools!.done as any).execute({outcome: 'partial', summary: 'Удалил один черновик из двух.'}, {toolCallId: 'd', messages: []});
+    yield {type: 'tool-result', id: 'd', ok: true, summary: 'Удалил один черновик из двух.'};
+  };
+  const {chat, events} = agentRunner({stream, requests: []} as any);
+  await chat.send(agentSend('удали черновики'));
+  const text = (events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.text;
+  assert.match(text, /Сначала посмотрю страницу\./);
+  assert.match(text, /Итог \(выполнено частично\): Удалил один черновик из двух\./);
+});

@@ -4,7 +4,7 @@ export default async function ({openPage, base, server}) {
   await dev.waitFor(`window.layer?.setGate`);
   const tab = await dev.eval(`layer.openTab(${JSON.stringify(`${server.origin}/danger.html`)})`);
   const call = (method, args = {}) => dev.eval(`layer.call(${tab}, ${JSON.stringify(method)}, ${JSON.stringify(args)})`);
-  const gate = (answers, blocked = []) => dev.eval(`layer.setGate(${tab}, ${JSON.stringify({answers, blocked})})`);
+  const gate = (answers, blocked = [], beforeAnswer) => dev.eval(`layer.setGate(${tab}, ${JSON.stringify({answers, blocked, beforeAnswer})})`);
   const questions = () => dev.eval(`layer.questions.splice(0)`);
   const status = () => dev.eval(`layer.evalInTab(${tab}, "document.getElementById('status').textContent")`);
   const refOf = async (role, name) => {
@@ -47,4 +47,28 @@ export default async function ({openPage, base, server}) {
   await gate([], ['localhost']);
   const blocked = await call('navigate', {url: `${server.origin}/danger.html`});
   must(!blocked.ok && blocked.text.includes('SITE_BLOCKED'), `заблокированный сайт: ${blocked.text}`);
+
+  // press Enter after an allow goes to the target, even if focus moved while the user decided.
+  await gate([]);
+  must((await call('navigate', {url: `${server.origin}/danger.html`})).ok, 'возврат на danger.html');
+  await gate(['allow'], [], `[...document.querySelectorAll('button')].find(b => b.textContent === 'Выйти').focus()`);
+  await call('snapshot');
+  const pressed = await call('press', {key: 'Enter', ref: await refOf('button', 'Удалить черновик')});
+  must(pressed.ok && await status() === 'Удалить черновик', `press после разрешения ушёл не туда: ${await status()} · ${pressed.text}`);
+
+  // Accepting confirm('Удалить запись?') opened by an unnamed button asks first.
+  await gate([]);
+  must((await call('navigate', {url: `${server.origin}/confirm.html`})).ok, 'переход на confirm.html');
+  await gate(['deny']);
+  const trash = await call('click', {ref: await refOf('button', '🗑')});
+  must(trash.text.includes('диалог'), `корзина: ${trash.text}`);
+  const accepted = await call('handleDialog', {accept: true});
+  must(!accepted.ok && accepted.text.includes('USER_DECLINED') && (await questions()).at(-1)?.category === 'delete', `confirm без вопроса: ${accepted.text}`);
+  must((await call('handleDialog', {accept: false})).ok, 'отказ в диалоге не прошёл');
+  must(await status() === 'Удаление отменено', `статус после отмены: ${await status()}`);
+
+  // A tab that is on a blocked site is not worked on.
+  await gate([], ['localhost']);
+  const onBlocked = await call('snapshot');
+  must(!onBlocked.ok && onBlocked.text.includes('SITE_BLOCKED'), `работа на заблокированном сайте: ${onBlocked.text}`);
 }

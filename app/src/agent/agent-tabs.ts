@@ -1,6 +1,6 @@
 // The tabs of one agent task: the tab it started in and the ones it opened (or a page opened for it). They are kept
 // in one tab group named after the chat, and the page the agent works on gets a frame while the debugger is attached.
-import {PageError, type PageTools} from '../page/index.ts';
+import {PageError, normalizeUrl, pageText, siteOf, type PageTools} from '../page/index.ts';
 
 export interface TabsDeps {
   tabs: typeof chrome.tabs;
@@ -8,6 +8,10 @@ export interface TabsDeps {
   open: (tabId: number) => Promise<{tools: PageTools; release(): Promise<void>}>;
   border: boolean;
   title: string;
+  /** Sites the user blocked: no tab is opened there. */
+  blocked?: (site: string) => boolean | Promise<boolean>;
+  /** The chat's tabs and group, shared by its replies (a new reply continues in the same tabs and group). */
+  memory?: {members: Set<number>; groupId: number | null};
 }
 
 const TITLE_MAX = 20;
@@ -16,9 +20,9 @@ export class AgentTabs {
   readonly #deps: TabsDeps;
   readonly #start: number;
   #current: number;
-  readonly #members = new Set<number>();
+  readonly #members: Set<number>;
   readonly #handles = new Map<number, Promise<{tools: PageTools; release(): Promise<void>}>>();
-  #groupId: number | null = null;
+  readonly #memory: {members: Set<number>; groupId: number | null};
   readonly #onCreated = (tab: chrome.tabs.Tab) => {
     if (tab.id !== undefined && tab.openerTabId !== undefined && this.#members.has(tab.openerTabId)) this.adopt(tab.id);
   };
@@ -27,6 +31,8 @@ export class AgentTabs {
     this.#deps = deps;
     this.#start = startTabId;
     this.#current = startTabId;
+    this.#memory = deps.memory ?? {members: new Set(), groupId: null};
+    this.#members = this.#memory.members;
     this.#members.add(startTabId);
     deps.tabs.onCreated?.addListener(this.#onCreated);
   }
@@ -53,11 +59,14 @@ export class AgentTabs {
       if (!tab) { this.#members.delete(id); continue; }
       lines.push(`${id === this.#current ? '* ' : '  '}[вкладка ${id}] ${tab.title ?? ''} — ${tab.url ?? ''}`);
     }
-    return lines.join('\n');
+    // Titles and addresses come from pages: they are data like any page text.
+    return pageText('Вкладки задачи (* — текущая):', lines.join('\n'), []);
   }
 
   async open(url: string): Promise<string> {
-    const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const target = normalizeUrl(url);
+    const site = siteOf(target);
+    if (site && await this.#deps.blocked?.(site)) throw new PageError('SITE_BLOCKED', `Сайт ${site} заблокирован пользователем: вкладку не открываю.`);
     const tab = await this.#deps.tabs.create({url: target, active: true, openerTabId: this.#current});
     this.#members.add(tab.id!);
     this.#current = tab.id!;
@@ -108,11 +117,14 @@ export class AgentTabs {
 
   async #group(tabId: number): Promise<void> {
     try {
-      if (this.#groupId === null) {
-        this.#groupId = await this.#deps.tabs.group({tabIds: [tabId]});
-        await this.#deps.tabGroups?.update(this.#groupId, {title: this.#deps.title.slice(0, TITLE_MAX), color: 'blue'});
+      if (this.#memory.groupId === null) {
+        this.#memory.groupId = await this.#deps.tabs.group({tabIds: [tabId]});
+        await this.#deps.tabGroups?.update(this.#memory.groupId, {title: this.#deps.title.slice(0, TITLE_MAX), color: 'blue'});
       } else {
-        await this.#deps.tabs.group({groupId: this.#groupId, tabIds: [tabId]});
+        await this.#deps.tabs.group({groupId: this.#memory.groupId, tabIds: [tabId]}).catch(async () => {
+          // The group was closed or emptied since the last reply: start a new one.
+          this.#memory.groupId = await this.#deps.tabs.group({tabIds: [tabId]});
+        });
       }
     } catch {
       // Grouping is a convenience: a tab in another window or a browser without groups works ungrouped.

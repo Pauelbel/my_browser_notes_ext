@@ -37498,7 +37498,7 @@ function buildChatTools(profile, page, notes) {
   return readTools(new Set(profile.tools.filter((t) => CHAT_TOOLS.includes(t))), page, notes);
 }
 function buildAgentTools(profile, ctx) {
-  const enabled = new Set(profile.tools.filter((t) => !NOT_YET.includes(t)));
+  const enabled = /* @__PURE__ */ new Set([...profile.tools.filter((t) => !NOT_YET.includes(t)), "done", "ask_user"]);
   const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes);
   const page = async (name5, args) => {
     const target = await ctx.tabs.current();
@@ -37579,6 +37579,17 @@ function buildAgentTools(profile, ctx) {
     inputSchema: external_exports.object({ outcome: external_exports.enum(["success", "partial", "failed"]), summary: external_exports.string() }),
     execute: async (a) => a.summary
   });
+  let queue = Promise.resolve();
+  for (const def of Object.values(tools)) {
+    const execute = def.execute;
+    if (!execute) continue;
+    def.execute = (input2, options) => {
+      const run = queue.then(() => execute(input2, options));
+      queue = run.catch(() => {
+      });
+      return run;
+    };
+  }
   return tools;
 }
 function describeInput(input2) {
@@ -37588,14 +37599,14 @@ function describeInput(input2) {
 
 // src/agent/elision.ts
 var ELIDED = "[\u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0441\u043A\u0440\u044B\u0442\u043E \u2014 \u043F\u0440\u0438 \u043D\u0435\u043E\u0431\u0445\u043E\u0434\u0438\u043C\u043E\u0441\u0442\u0438 \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot]";
-var PAGE_START = "<<<page-content>>>";
+var READING_TOOLS = /* @__PURE__ */ new Set(["snapshot", "read", "find", "notes_read", "notes_search", "screenshot", "console_log", "network_log", "page_checks"]);
 function elideOldPages(messages, keep = 3) {
   const pages = [];
   messages.forEach((m, i) => {
     const msg = m;
     if (msg.role !== "tool" || !Array.isArray(msg.content)) return;
     msg.content.forEach((part, j) => {
-      if (typeof part.output?.value === "string" && part.output.value.includes(PAGE_START)) pages.push([i, j]);
+      if (part.toolName && READING_TOOLS.has(part.toolName) && typeof part.output?.value === "string") pages.push([i, j]);
     });
   });
   const drop = new Set(pages.slice(0, Math.max(0, pages.length - keep)).map(([i, j]) => `${i}:${j}`));
@@ -38193,8 +38204,8 @@ function buildFrame(frame, offsetY, ctx) {
     const becomesClickable = !interactiveRole && !insideInteractive && Boolean(own2?.clickable) && role !== "RootWebArea" && !["html", "body"].includes(own2?.tag ?? "") && !hasInteractive(children);
     if (becomesClickable) {
       const full = name5 || textOf(children);
-      const short = full.length > CLICKABLE_NAME_MAX ? `${full.slice(0, CLICKABLE_NAME_MAX - 1).trimEnd()}\u2026` : full;
-      return [{ ...base(ax), kind: "element", role: "clickable", name: short, states: [], children: tidy(children, short), interactive: true, y: yOf(own2) }];
+      const short2 = full.length > CLICKABLE_NAME_MAX ? `${full.slice(0, CLICKABLE_NAME_MAX - 1).trimEnd()}\u2026` : full;
+      return [{ ...base(ax), kind: "element", role: "clickable", name: short2, states: [], children: tidy(children, short2), interactive: true, y: yOf(own2) }];
     }
     const node2 = { ...base(ax), kind: "element", role, name: name5, states: states(ax), children, interactive: interactiveRole, y: yOf(own2) };
     if (role === "link" && own2?.attrs.href) node2.href = own2.attrs.href;
@@ -39043,7 +39054,7 @@ var targetFacts = (session, t) => callOn(session, t.frame, t.objectId, `function
     return {tag: control.tagName.toLowerCase(), type: (control.getAttribute('type') || '').toLowerCase(), inForm: Boolean(form),
       formHasPassword: Boolean(form && form.querySelector('input[type=password]')),
       attrs: {type: control.getAttribute('type') || '', autocomplete: control.getAttribute('autocomplete') || ''},
-      nearby: (block.innerText || '').replace(/s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || ''};
+      nearby: (block.innerText || '').replace(/\\s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || '', contentEditable: Boolean(el.isContentEditable)};
   }`);
 var isSelect = (session, t) => callOn(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');
 
@@ -39076,7 +39087,7 @@ function renderDiff(d, max = 30) {
 }
 
 // src/page/classify.ts
-var USER_STEP = /* @__PURE__ */ new Set(["pay", "access", "secret"]);
+var USER_STEP = /* @__PURE__ */ new Set(["pay", "access", "secret", "captcha"]);
 function vocabulary(words) {
   const parts = words.map((w) => w.endsWith("*") ? `${w.slice(0, -1).replace(/\s+/g, "\\s+")}\\p{L}*` : w.replace(/\s+/g, "\\s+"));
   return new RegExp(`(?<![\\p{L}\\p{N}])(?:${parts.join("|")})(?![\\p{L}\\p{N}])`, "iu");
@@ -39103,22 +39114,26 @@ var PAY = vocabulary([
   "donate",
   "top up"
 ]);
-var ACCESS = vocabulary(["\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C", "authorize", "allow access", "grant access", "connect account"]);
+var ACCESS = vocabulary(["\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C", "\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C", "\u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C", "authorize", "allow", "allow access", "grant", "grant access", "connect account"]);
+var SECRET_FIELD = vocabulary(["\u043F\u0430\u0440\u043E\u043B\u044C", "password", "\u043D\u043E\u043C\u0435\u0440 \u043A\u0430\u0440\u0442\u044B", "\u043A\u0430\u0440\u0442\u0430", "card number", "cvv", "cvc", "\u043A\u043E\u0434 \u0438\u0437 \u0441\u043C\u0441", "\u043A\u043E\u0434 \u0438\u0437 sms", "\u043A\u043E\u0434 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F", "\u043E\u0434\u043D\u043E\u0440\u0430\u0437\u043E\u0432\u044B\u0439 \u043A\u043E\u0434", "sms code", "verification code", "pin", "\u043F\u0438\u043D", "\u043F\u0438\u043D-\u043A\u043E\u0434"]);
+var CAPTCHA = vocabulary(["\u043D\u0435 \u0440\u043E\u0431\u043E\u0442", "\u043D\u0435 \u044F\u0432\u043B\u044F\u044E\u0441\u044C \u0440\u043E\u0431\u043E\u0442\u043E\u043C", "not a robot", "captcha", "\u043A\u0430\u043F\u0447\u0430", "recaptcha", "hcaptcha"]);
 var DELETE = vocabulary(["\u0443\u0434\u0430\u043B*", "\u0441\u0442\u0435\u0440\u0435\u0442\u044C", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0451", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0435", "delete", "remove", "erase", "destroy"]);
 var LOGOUT = vocabulary(["\u0432\u044B\u0439\u0442\u0438", "\u0432\u044B\u0445\u043E\u0434", "log out", "logout", "sign out"]);
 var SEND = vocabulary(["\u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C", "\u043E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u0442\u044C", "send", "post", "publish", "reply"]);
 var GENERIC_CONFIRM = vocabulary(["\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C", "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C", "confirm", "continue"]);
-var MONEY = /\d[\d\s.,]*\s*(₽|руб|\$|€|usd|eur)/iu;
+var MONEY = /\d[\d\s.,]*\s*(₽|руб|\$|€|usd|eur)|(₽|\$|€)\s*\d/iu;
 var fold2 = (s) => s.replace(/ё/gi, "\u0435");
 function classify(f) {
-  if (f.action === "type") return f.secretField ? "secret" : null;
   const name5 = fold2(f.name);
+  if (f.action === "type") return f.secretField || SECRET_FIELD.test(name5) ? "secret" : null;
+  if (CAPTCHA.test(name5)) return "captcha";
   if (PAY.test(name5) || GENERIC_CONFIRM.test(name5) && (MONEY.test(name5) || MONEY.test(f.nearbyText))) return "pay";
   if (MONEY.test(name5) && f.action === "activate" && ["button", "link", "clickable"].includes(f.role)) return "pay";
   if (ACCESS.test(name5)) return "access";
   if (DELETE.test(name5)) return "delete";
   if (LOGOUT.test(name5)) return "logout";
   if (SEND.test(name5)) return "send";
+  if (f.action === "enter" && !f.inForm && (f.tag === "textarea" || f.contentEditable)) return "send";
   const submits = f.action === "activate" ? f.inForm && (f.type === "submit" || f.type === "image" || f.tag === "button" && f.type === "") : f.inForm;
   return submits ? "submit" : null;
 }
@@ -39194,13 +39209,14 @@ var CATEGORY_TEXT = {
   pay: "\u043E\u043F\u043B\u0430\u0442\u0430",
   access: "\u0432\u044B\u0434\u0430\u0447\u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u0430",
   secret: "\u0432\u0432\u043E\u0434 \u0441\u0435\u043A\u0440\u0435\u0442\u0430",
+  captcha: "\u043A\u0430\u043F\u0447\u0430",
   delete: "\u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435",
   logout: "\u0432\u044B\u0445\u043E\u0434 \u0438\u0437 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430",
   send: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430",
   submit: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u0444\u043E\u0440\u043C\u044B"
 };
-var ORDER = ["pay", "access", "secret", "delete", "logout", "send", "submit"];
-var PAGE_START2 = "<<<page-content>>>";
+var ORDER = ["pay", "access", "secret", "captcha", "delete", "logout", "send", "submit"];
+var PAGE_START = "<<<page-content>>>";
 var NAVIGATION_TIMEOUT_MS = 15e3;
 var WAIT_POLL_MS = 250;
 var fold3 = (s) => s.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435");
@@ -39218,7 +39234,7 @@ function neutralize2(text3) {
   return text3.replace(/<{3,}/g, "\u2039\u2039\u2039").replace(/>{3,}/g, "\u203A\u203A\u203A");
 }
 function pageText(head, body, notices) {
-  return [PAGE_START2, ...[head, body].filter(Boolean).map(neutralize2), PAGE_END, ...notices.map(neutralize2)].join("\n");
+  return [PAGE_START, ...[head, body].filter(Boolean).map(neutralize2), PAGE_END, ...notices.map(neutralize2)].join("\n");
 }
 function errorResult(error62) {
   if (error62 instanceof PageError) {
@@ -39259,8 +39275,12 @@ var PageTools = class {
     });
   }
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
-  async run(fn, allowDuringDialog = false) {
+  async run(fn, allowDuringDialog = false, allowOnBlocked = false) {
     try {
+      if (this.gate && !allowOnBlocked) {
+        const site = siteOf(this.session.frames.main().url);
+        if (site && await this.gate.blocked(site)) throw new PageError("SITE_BLOCKED", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435 ${site}, \u043A\u043E\u0442\u043E\u0440\u044B\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043B: \u0437\u0434\u0435\u0441\u044C \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0434\u0435\u043B\u0430\u0435\u0442. \u0423\u0439\u0434\u0438\u0442\u0435 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (navigate) \u0438\u043B\u0438 \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443.`);
+      }
       if (this.dialog && !allowDuringDialog) {
         throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E (handle_dialog), \u0435\u0441\u043B\u0438 \u044D\u0442\u043E\u0442 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0435\u0441\u0442\u044C, \u0438\u043D\u0430\u0447\u0435 \u043F\u043E\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433.`);
       }
@@ -39319,7 +39339,7 @@ var PageTools = class {
   async #gate(verb, ref, target, actions) {
     if (!actions.length) return "go";
     const facts = await targetFacts(this.session, target);
-    if (facts.href && this.gate?.blocked(siteOf(facts.href))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(facts.href)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
+    if (facts.href && await this.gate?.blocked(siteOf(facts.href))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(facts.href)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
     if (!this.gate) return "go";
     const found = actions.map((action) => classify({
       action,
@@ -39330,7 +39350,8 @@ var PageTools = class {
       inForm: facts.inForm,
       formHasPassword: facts.formHasPassword,
       secretField: isSecretField(facts.attrs),
-      nearbyText: facts.nearby
+      nearbyText: facts.nearby,
+      contentEditable: facts.contentEditable
     })).filter((c) => c !== null);
     if (!found.length) return "go";
     const category = ORDER.find((c) => found.includes(c));
@@ -39427,17 +39448,18 @@ ${diff}` : head;
         throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${args.key} \u0443\u043A\u0430\u0436\u0438\u0442\u0435 ref \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430: \u0442\u0430\u043A \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442\u0441\u044F.`);
       }
       if (args.ref) {
-        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        if (args.key === "Enter" || args.key === "Space") {
+          const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
+          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
+          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
+          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        }
         await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
         await this.session.cdp.send("DOM.focus", { backendNodeId: target.record.backendNodeId }, target.frame.sessionId).catch(() => {
         });
         if (!await isFocused(this.session, target)) {
           throw new PageError("NOT_EDITABLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref} \u043D\u0435 \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442 \u0444\u043E\u043A\u0443\u0441 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B: \u043A\u043B\u0430\u0432\u0438\u0448\u0430 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430. \u0414\u043B\u044F \u043D\u0435\u0433\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439\u0442\u0435 click.`);
-        }
-        if (args.key === "Enter" || args.key === "Space") {
-          const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
-          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
-          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(
@@ -39500,7 +39522,7 @@ ${diff}` : head;
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
         } else {
           const url2 = normalizeUrl(args.url ?? "");
-          if (this.gate?.blocked(siteOf(url2))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(url2)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C.`);
+          if (await this.gate?.blocked(siteOf(url2))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(url2)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C.`);
           what = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${url2}`;
           const r = await cdp.send("Page.navigate", { url: url2 });
           if (r.errorText) throw new PageError("NOT_FOUND", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C ${url2}: ${r.errorText}.`);
@@ -39512,7 +39534,7 @@ ${diff}` : head;
       const o = await this.observer.snapshot({ budget: this.budget });
       return `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
 \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`;
-    });
+    }, false, true);
   }
   wait(args) {
     return this.run(async () => {
@@ -39600,13 +39622,25 @@ ${diff}` : head;
           this.dialog = void 0;
           return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
         }
-        throw new PageError("USER_DECLINED", "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u2014 \u0448\u0430\u0433 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043E\u043D \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B.");
+        await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: false }).catch(() => {
+        });
+        this.dialog = void 0;
+        throw new PageError("USER_DECLINED", "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u2014 \u0448\u0430\u0433 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043E\u043D \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B, \u0434\u0438\u0430\u043B\u043E\u0433 \u0437\u0430\u043A\u0440\u044B\u0442 \u043E\u0442\u043C\u0435\u043D\u043E\u0439.");
+      }
+      if (was.type === "confirm" && args.accept && this.gate) {
+        const category = classify({ action: "activate", role: "button", name: was.message, tag: "button", type: "", inForm: false, formHasPassword: false, secretField: false, nearbyText: "" });
+        if (category) {
+          const url2 = this.session.frames.main().url;
+          const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category, site: siteOf(url2), url: url2 });
+          if (answer.decision === "user-did-it") return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
+          if (answer.decision !== "allow") throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \xAB${was.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u043E\u0442\u043C\u0435\u043D\u043E\u0439 (accept=false).`);
+        }
       }
       await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
       this.dialog = void 0;
       await new Promise((r) => setTimeout(r, 300));
       return `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
-    }, true);
+    }, true, true);
   }
   /** For the e2e harness: runs the checks before an action on a label, without acting. */
   async debugActionable(ref) {
@@ -39630,9 +39664,9 @@ var AgentTabs = class {
   #deps;
   #start;
   #current;
-  #members = /* @__PURE__ */ new Set();
+  #members;
   #handles = /* @__PURE__ */ new Map();
-  #groupId = null;
+  #memory;
   #onCreated = (tab) => {
     if (tab.id !== void 0 && tab.openerTabId !== void 0 && this.#members.has(tab.openerTabId)) this.adopt(tab.id);
   };
@@ -39640,6 +39674,8 @@ var AgentTabs = class {
     this.#deps = deps;
     this.#start = startTabId;
     this.#current = startTabId;
+    this.#memory = deps.memory ?? { members: /* @__PURE__ */ new Set(), groupId: null };
+    this.#members = this.#memory.members;
     this.#members.add(startTabId);
     deps.tabs.onCreated?.addListener(this.#onCreated);
   }
@@ -39667,10 +39703,12 @@ var AgentTabs = class {
       }
       lines.push(`${id === this.#current ? "* " : "  "}[\u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${id}] ${tab.title ?? ""} \u2014 ${tab.url ?? ""}`);
     }
-    return lines.join("\n");
+    return pageText("\u0412\u043A\u043B\u0430\u0434\u043A\u0438 \u0437\u0430\u0434\u0430\u0447\u0438 (* \u2014 \u0442\u0435\u043A\u0443\u0449\u0430\u044F):", lines.join("\n"), []);
   }
   async open(url2) {
-    const target = /^https?:\/\//i.test(url2) ? url2 : `https://${url2}`;
+    const target = normalizeUrl(url2);
+    const site = siteOf(target);
+    if (site && await this.#deps.blocked?.(site)) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${site} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0432\u043A\u043B\u0430\u0434\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
     const tab = await this.#deps.tabs.create({ url: target, active: true, openerTabId: this.#current });
     this.#members.add(tab.id);
     this.#current = tab.id;
@@ -39715,11 +39753,13 @@ var AgentTabs = class {
   }
   async #group(tabId) {
     try {
-      if (this.#groupId === null) {
-        this.#groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
-        await this.#deps.tabGroups?.update(this.#groupId, { title: this.#deps.title.slice(0, TITLE_MAX), color: "blue" });
+      if (this.#memory.groupId === null) {
+        this.#memory.groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
+        await this.#deps.tabGroups?.update(this.#memory.groupId, { title: this.#deps.title.slice(0, TITLE_MAX), color: "blue" });
       } else {
-        await this.#deps.tabs.group({ groupId: this.#groupId, tabIds: [tabId] });
+        await this.#deps.tabs.group({ groupId: this.#memory.groupId, tabIds: [tabId] }).catch(async () => {
+          this.#memory.groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
+        });
       }
     } catch {
     }
@@ -39733,33 +39773,43 @@ function decideWrite(mode, rule) {
   if (rule === "ask") return "ask";
   return mode === "auto" ? "allow" : "ask";
 }
+function ruleFor(rules, host) {
+  let best;
+  for (const site of Object.keys(rules)) {
+    if ((host === site || host.endsWith(`.${site}`)) && (!best || site.length > best.length)) best = site;
+  }
+  return best ? rules[best] : void 0;
+}
 
 // src/background/agent-session.ts
 var CATEGORY_TEXT2 = {
   pay: "\u043E\u043F\u043B\u0430\u0442\u0430",
   access: "\u0432\u044B\u0434\u0430\u0447\u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u0430",
   secret: "\u0432\u0432\u043E\u0434 \u0441\u0435\u043A\u0440\u0435\u0442\u0430",
+  captcha: "\u043A\u0430\u043F\u0447\u0430",
   delete: "\u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435",
   logout: "\u0432\u044B\u0445\u043E\u0434 \u0438\u0437 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430",
   send: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430",
   submit: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u0444\u043E\u0440\u043C\u044B"
 };
+var short = (text3) => text3.length > 80 ? `${text3.slice(0, 79)}\u2026` : text3;
 function actionText(q) {
-  if (q.action === "type") return `\u0412\u0432\u0435\u0441\u0442\u0438 \u0442\u0435\u043A\u0441\u0442 \u0432 \xAB${q.name}\xBB`;
-  if (q.action === "handle_dialog") return `\u041E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \xAB${q.name}\xBB`;
-  if (q.action.startsWith("press")) return `\u041D\u0430\u0436\u0430\u0442\u044C ${q.action.slice(6)} \u043D\u0430 \xAB${q.name}\xBB`;
-  return `\u041D\u0430\u0436\u0430\u0442\u044C \xAB${q.name}\xBB`;
+  const name5 = short(q.name);
+  if (q.action === "type") return `\u0412\u0432\u0435\u0441\u0442\u0438 \u0442\u0435\u043A\u0441\u0442 \u0432 \xAB${name5}\xBB`;
+  if (q.action === "handle_dialog") return `\u041E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \xAB${name5}\xBB`;
+  if (q.action.startsWith("press")) return `\u041D\u0430\u0436\u0430\u0442\u044C ${q.action.slice(6)} \u043D\u0430 \xAB${name5}\xBB`;
+  return `\u041D\u0430\u0436\u0430\u0442\u044C \xAB${name5}\xBB`;
 }
 function makeGate(opts) {
   return {
-    blocked: (site) => opts.settings.siteRules[site] === "block",
+    blocked: async (site) => ruleFor(await opts.rules(), site) === "block",
     async check(q) {
       const where = q.site ? ` \u043D\u0430 ${q.site}` : "";
       if (USER_STEP.has(q.category)) {
         const answer2 = await opts.ask({ kind: "takeover", text: `\u042D\u0442\u043E \u0432\u0430\u0448 \u0448\u0430\u0433 (${CATEGORY_TEXT2[q.category]}): ${actionText(q)}${where}. \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 \u044D\u0442\u043E \u0441\u0430\u043C\u0438 \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0413\u043E\u0442\u043E\u0432\u043E\xBB.`, site: q.site, category: q.category });
         return { decision: answer2 === "done" ? "user-did-it" : "cancel" };
       }
-      const decision = decideWrite(opts.permission, opts.settings.siteRules[q.site]);
+      const decision = decideWrite(await opts.permission(), ruleFor(await opts.rules(), q.site));
       if (decision === "block") return { decision: "deny" };
       if (decision === "allow") return { decision: "allow" };
       const answer = await opts.ask({ kind: "confirm", text: `${actionText(q)}${where} (${CATEGORY_TEXT2[q.category]})?`, site: q.site, category: q.category });
@@ -39775,13 +39825,15 @@ var NO_NOTES = {
   append: async () => "\u0417\u0430\u043C\u0435\u0442\u043A\u0438 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B."
 };
 function createAgentSession(deps) {
-  const gate = makeGate({ permission: deps.conversation.permission, settings: deps.settings, ask: deps.ask, setSiteRule: deps.setSiteRule });
+  const gate = makeGate({ permission: deps.readPermission, rules: async () => (await deps.readSettings()).siteRules, ask: deps.ask, setSiteRule: deps.setSiteRule });
   const tabs = new AgentTabs(deps.tabId, {
     tabs: deps.tabsApi,
     tabGroups: deps.tabGroupsApi,
     border: deps.settings.border,
     title: deps.conversation.title,
-    open: (tabId) => deps.openTab(tabId, gate)
+    open: (tabId) => deps.openTab(tabId, gate),
+    blocked: (site) => gate.blocked(site),
+    memory: deps.memory
   });
   const tools = buildAgentTools(deps.profile, {
     tabs: {
@@ -39798,7 +39850,7 @@ function createAgentSession(deps) {
       return typeof answer === "object" ? `\u041E\u0442\u0432\u0435\u0442 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F: ${answer.text}` : "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B.";
     },
     confirmNotes: async (what) => {
-      if (deps.conversation.permission === "auto") return true;
+      if (await deps.readPermission() === "auto") return true;
       const answer = await deps.ask({ kind: "confirm", text: what });
       return answer === "allow" || answer === "allow-site";
     }
@@ -39815,6 +39867,8 @@ var ChatRunner = class {
   #active = 0;
   #beat = null;
   #broker;
+  /** Each chat's agent tabs and tab group, so its next reply continues in them (kept while the worker lives). */
+  #tabMemory = /* @__PURE__ */ new Map();
   constructor(deps) {
     this.#deps = deps;
     this.#broker = new PromptBroker(deps.emit);
@@ -39938,12 +39992,16 @@ var ChatRunner = class {
       notes: this.#deps.notes,
       setSiteRule: this.#deps.setSiteRule ?? (async () => {
       }),
+      readSettings: this.#deps.settings,
+      readPermission: async () => (await getConversation(conversationId))?.permission ?? conversation.permission,
+      memory: this.#tabMemory.get(conversationId) ?? this.#tabMemory.set(conversationId, { members: /* @__PURE__ */ new Set(), groupId: null }).get(conversationId),
       ask: (prompt) => this.#broker.ask({ ...prompt, conversationId }, run.controller.signal)
     }) : null;
     const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes) : {};
     const toolNames = Object.keys(tools);
     let steps = 0;
     let doneSummary = null;
+    let doneOutcome = "success";
     let afterTool = false;
     const emitStep = (step) => this.#deps.emit({ type: "step", conversationId: reply.conversationId, messageId: reply.id, step });
     try {
@@ -39963,6 +40021,7 @@ var ChatRunner = class {
         if (part.type === "tool-call" && part.name === "done") {
           const input2 = part.input;
           doneSummary = input2?.summary ?? "";
+          doneOutcome = input2?.outcome ?? "success";
         }
         if (part.type === "tool-call") {
           const step = { id: part.id, name: part.name, input: describeInput(part.input), status: "running", summary: "" };
@@ -39994,7 +40053,14 @@ var ChatRunner = class {
       }
       reply.status = run.controller.signal.aborted ? "stopped" : "done";
       if (agent && reply.status === "done") {
-        if (!reply.text.trim() && doneSummary) reply.text = doneSummary;
+        if (doneSummary) {
+          const label = doneOutcome === "failed" ? "\u0418\u0442\u043E\u0433 (\u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C): " : doneOutcome === "partial" ? "\u0418\u0442\u043E\u0433 (\u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E \u0447\u0430\u0441\u0442\u0438\u0447\u043D\u043E): " : "";
+          const summary = `${label}${doneSummary}`;
+          if (!reply.text.trim()) reply.text = summary;
+          else if (!reply.text.trim().endsWith(doneSummary.trim())) reply.text = `${reply.text.trimEnd()}
+
+${summary}`;
+        }
         if (doneSummary === null && steps >= AGENT_MAX_STEPS) {
           reply.text = `${reply.text.trim() ? `${reply.text.trim()}
 

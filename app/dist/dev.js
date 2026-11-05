@@ -1400,7 +1400,7 @@ var targetFacts = (session, t) => callOn(session, t.frame, t.objectId, `function
     return {tag: control.tagName.toLowerCase(), type: (control.getAttribute('type') || '').toLowerCase(), inForm: Boolean(form),
       formHasPassword: Boolean(form && form.querySelector('input[type=password]')),
       attrs: {type: control.getAttribute('type') || '', autocomplete: control.getAttribute('autocomplete') || ''},
-      nearby: (block.innerText || '').replace(/s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || ''};
+      nearby: (block.innerText || '').replace(/\\s+/g, ' ').slice(0, 200), href: (el.closest('a') || {}).href || '', contentEditable: Boolean(el.isContentEditable)};
   }`);
 var isSelect = (session, t) => callOn(session, t.frame, t.objectId, 'function () { return this.tagName === "SELECT"; }');
 
@@ -1459,22 +1459,26 @@ var PAY = vocabulary([
   "donate",
   "top up"
 ]);
-var ACCESS = vocabulary(["\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C", "authorize", "allow access", "grant access", "connect account"]);
+var ACCESS = vocabulary(["\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C", "\u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F", "\u043F\u0440\u0435\u0434\u043E\u0441\u0442\u0430\u0432\u0438\u0442\u044C", "\u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C", "authorize", "allow", "allow access", "grant", "grant access", "connect account"]);
+var SECRET_FIELD = vocabulary(["\u043F\u0430\u0440\u043E\u043B\u044C", "password", "\u043D\u043E\u043C\u0435\u0440 \u043A\u0430\u0440\u0442\u044B", "\u043A\u0430\u0440\u0442\u0430", "card number", "cvv", "cvc", "\u043A\u043E\u0434 \u0438\u0437 \u0441\u043C\u0441", "\u043A\u043E\u0434 \u0438\u0437 sms", "\u043A\u043E\u0434 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F", "\u043E\u0434\u043D\u043E\u0440\u0430\u0437\u043E\u0432\u044B\u0439 \u043A\u043E\u0434", "sms code", "verification code", "pin", "\u043F\u0438\u043D", "\u043F\u0438\u043D-\u043A\u043E\u0434"]);
+var CAPTCHA = vocabulary(["\u043D\u0435 \u0440\u043E\u0431\u043E\u0442", "\u043D\u0435 \u044F\u0432\u043B\u044F\u044E\u0441\u044C \u0440\u043E\u0431\u043E\u0442\u043E\u043C", "not a robot", "captcha", "\u043A\u0430\u043F\u0447\u0430", "recaptcha", "hcaptcha"]);
 var DELETE = vocabulary(["\u0443\u0434\u0430\u043B*", "\u0441\u0442\u0435\u0440\u0435\u0442\u044C", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0451", "\u043E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0432\u0441\u0435", "delete", "remove", "erase", "destroy"]);
 var LOGOUT = vocabulary(["\u0432\u044B\u0439\u0442\u0438", "\u0432\u044B\u0445\u043E\u0434", "log out", "logout", "sign out"]);
 var SEND = vocabulary(["\u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C", "\u043E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u0442\u044C", "send", "post", "publish", "reply"]);
 var GENERIC_CONFIRM = vocabulary(["\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C", "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C", "confirm", "continue"]);
-var MONEY = /\d[\d\s.,]*\s*(₽|руб|\$|€|usd|eur)/iu;
+var MONEY = /\d[\d\s.,]*\s*(₽|руб|\$|€|usd|eur)|(₽|\$|€)\s*\d/iu;
 var fold2 = (s) => s.replace(/ё/gi, "\u0435");
 function classify(f) {
-  if (f.action === "type") return f.secretField ? "secret" : null;
   const name = fold2(f.name);
+  if (f.action === "type") return f.secretField || SECRET_FIELD.test(name) ? "secret" : null;
+  if (CAPTCHA.test(name)) return "captcha";
   if (PAY.test(name) || GENERIC_CONFIRM.test(name) && (MONEY.test(name) || MONEY.test(f.nearbyText))) return "pay";
   if (MONEY.test(name) && f.action === "activate" && ["button", "link", "clickable"].includes(f.role)) return "pay";
   if (ACCESS.test(name)) return "access";
   if (DELETE.test(name)) return "delete";
   if (LOGOUT.test(name)) return "logout";
   if (SEND.test(name)) return "send";
+  if (f.action === "enter" && !f.inForm && (f.tag === "textarea" || f.contentEditable)) return "send";
   const submits = f.action === "activate" ? f.inForm && (f.type === "submit" || f.type === "image" || f.tag === "button" && f.type === "") : f.inForm;
   return submits ? "submit" : null;
 }
@@ -1550,12 +1554,13 @@ var CATEGORY_TEXT = {
   pay: "\u043E\u043F\u043B\u0430\u0442\u0430",
   access: "\u0432\u044B\u0434\u0430\u0447\u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u0430",
   secret: "\u0432\u0432\u043E\u0434 \u0441\u0435\u043A\u0440\u0435\u0442\u0430",
+  captcha: "\u043A\u0430\u043F\u0447\u0430",
   delete: "\u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435",
   logout: "\u0432\u044B\u0445\u043E\u0434 \u0438\u0437 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430",
   send: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430",
   submit: "\u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0430 \u0444\u043E\u0440\u043C\u044B"
 };
-var ORDER = ["pay", "access", "secret", "delete", "logout", "send", "submit"];
+var ORDER = ["pay", "access", "secret", "captcha", "delete", "logout", "send", "submit"];
 var PAGE_START = "<<<page-content>>>";
 var NAVIGATION_TIMEOUT_MS = 15e3;
 var WAIT_POLL_MS = 250;
@@ -1615,8 +1620,12 @@ var PageTools = class {
     });
   }
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
-  async run(fn, allowDuringDialog = false) {
+  async run(fn, allowDuringDialog = false, allowOnBlocked = false) {
     try {
+      if (this.gate && !allowOnBlocked) {
+        const site = siteOf(this.session.frames.main().url);
+        if (site && await this.gate.blocked(site)) throw new PageError("SITE_BLOCKED", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435 ${site}, \u043A\u043E\u0442\u043E\u0440\u044B\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043B: \u0437\u0434\u0435\u0441\u044C \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0434\u0435\u043B\u0430\u0435\u0442. \u0423\u0439\u0434\u0438\u0442\u0435 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (navigate) \u0438\u043B\u0438 \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443.`);
+      }
       if (this.dialog && !allowDuringDialog) {
         throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E (handle_dialog), \u0435\u0441\u043B\u0438 \u044D\u0442\u043E\u0442 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0435\u0441\u0442\u044C, \u0438\u043D\u0430\u0447\u0435 \u043F\u043E\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433.`);
       }
@@ -1675,7 +1684,7 @@ var PageTools = class {
   async #gate(verb, ref, target, actions) {
     if (!actions.length) return "go";
     const facts = await targetFacts(this.session, target);
-    if (facts.href && this.gate?.blocked(siteOf(facts.href))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(facts.href)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
+    if (facts.href && await this.gate?.blocked(siteOf(facts.href))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(facts.href)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
     if (!this.gate) return "go";
     const found = actions.map((action) => classify({
       action,
@@ -1686,7 +1695,8 @@ var PageTools = class {
       inForm: facts.inForm,
       formHasPassword: facts.formHasPassword,
       secretField: isSecretField(facts.attrs),
-      nearbyText: facts.nearby
+      nearbyText: facts.nearby,
+      contentEditable: facts.contentEditable
     })).filter((c) => c !== null);
     if (!found.length) return "go";
     const category = ORDER.find((c) => found.includes(c));
@@ -1783,17 +1793,18 @@ ${diff}` : head;
         throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${args.key} \u0443\u043A\u0430\u0436\u0438\u0442\u0435 ref \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430: \u0442\u0430\u043A \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442\u0441\u044F.`);
       }
       if (args.ref) {
-        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        if (args.key === "Enter" || args.key === "Space") {
+          const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
+          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
+          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
+          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        }
         await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
         await this.session.cdp.send("DOM.focus", { backendNodeId: target.record.backendNodeId }, target.frame.sessionId).catch(() => {
         });
         if (!await isFocused(this.session, target)) {
           throw new PageError("NOT_EDITABLE", `\u042D\u043B\u0435\u043C\u0435\u043D\u0442 ${args.ref} \u043D\u0435 \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442 \u0444\u043E\u043A\u0443\u0441 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B: \u043A\u043B\u0430\u0432\u0438\u0448\u0430 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430. \u0414\u043B\u044F \u043D\u0435\u0433\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439\u0442\u0435 click.`);
-        }
-        if (args.key === "Enter" || args.key === "Space") {
-          const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
-          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
-          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(
@@ -1856,7 +1867,7 @@ ${diff}` : head;
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
         } else {
           const url = normalizeUrl(args.url ?? "");
-          if (this.gate?.blocked(siteOf(url))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(url)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C.`);
+          if (await this.gate?.blocked(siteOf(url))) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${siteOf(url)} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C.`);
           what = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${url}`;
           const r = await cdp.send("Page.navigate", { url });
           if (r.errorText) throw new PageError("NOT_FOUND", `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043A\u0440\u044B\u0442\u044C ${url}: ${r.errorText}.`);
@@ -1868,7 +1879,7 @@ ${diff}` : head;
       const o = await this.observer.snapshot({ budget: this.budget });
       return `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
 \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`;
-    });
+    }, false, true);
   }
   wait(args) {
     return this.run(async () => {
@@ -1956,13 +1967,25 @@ ${diff}` : head;
           this.dialog = void 0;
           return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
         }
-        throw new PageError("USER_DECLINED", "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u2014 \u0448\u0430\u0433 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043E\u043D \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B.");
+        await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: false }).catch(() => {
+        });
+        this.dialog = void 0;
+        throw new PageError("USER_DECLINED", "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u2014 \u0448\u0430\u0433 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F; \u043E\u043D \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B, \u0434\u0438\u0430\u043B\u043E\u0433 \u0437\u0430\u043A\u0440\u044B\u0442 \u043E\u0442\u043C\u0435\u043D\u043E\u0439.");
+      }
+      if (was.type === "confirm" && args.accept && this.gate) {
+        const category = classify({ action: "activate", role: "button", name: was.message, tag: "button", type: "", inForm: false, formHasPassword: false, secretField: false, nearbyText: "" });
+        if (category) {
+          const url = this.session.frames.main().url;
+          const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category, site: siteOf(url), url });
+          if (answer.decision === "user-did-it") return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
+          if (answer.decision !== "allow") throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \xAB${was.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u043E\u0442\u043C\u0435\u043D\u043E\u0439 (accept=false).`);
+        }
       }
       await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
       this.dialog = void 0;
       await new Promise((r) => setTimeout(r, 300));
       return `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
-    }, true);
+    }, true, true);
   }
   /** For the e2e harness: runs the checks before an action on a label, without acting. */
   async debugActionable(ref) {
@@ -1986,9 +2009,9 @@ var AgentTabs = class {
   #deps;
   #start;
   #current;
-  #members = /* @__PURE__ */ new Set();
+  #members;
   #handles = /* @__PURE__ */ new Map();
-  #groupId = null;
+  #memory;
   #onCreated = (tab) => {
     if (tab.id !== void 0 && tab.openerTabId !== void 0 && this.#members.has(tab.openerTabId)) this.adopt(tab.id);
   };
@@ -1996,6 +2019,8 @@ var AgentTabs = class {
     this.#deps = deps;
     this.#start = startTabId;
     this.#current = startTabId;
+    this.#memory = deps.memory ?? { members: /* @__PURE__ */ new Set(), groupId: null };
+    this.#members = this.#memory.members;
     this.#members.add(startTabId);
     deps.tabs.onCreated?.addListener(this.#onCreated);
   }
@@ -2023,10 +2048,12 @@ var AgentTabs = class {
       }
       lines.push(`${id === this.#current ? "* " : "  "}[\u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${id}] ${tab.title ?? ""} \u2014 ${tab.url ?? ""}`);
     }
-    return lines.join("\n");
+    return pageText("\u0412\u043A\u043B\u0430\u0434\u043A\u0438 \u0437\u0430\u0434\u0430\u0447\u0438 (* \u2014 \u0442\u0435\u043A\u0443\u0449\u0430\u044F):", lines.join("\n"), []);
   }
   async open(url) {
-    const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const target = normalizeUrl(url);
+    const site = siteOf(target);
+    if (site && await this.#deps.blocked?.(site)) throw new PageError("SITE_BLOCKED", `\u0421\u0430\u0439\u0442 ${site} \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C: \u0432\u043A\u043B\u0430\u0434\u043A\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E.`);
     const tab = await this.#deps.tabs.create({ url: target, active: true, openerTabId: this.#current });
     this.#members.add(tab.id);
     this.#current = tab.id;
@@ -2071,11 +2098,13 @@ var AgentTabs = class {
   }
   async #group(tabId) {
     try {
-      if (this.#groupId === null) {
-        this.#groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
-        await this.#deps.tabGroups?.update(this.#groupId, { title: this.#deps.title.slice(0, TITLE_MAX), color: "blue" });
+      if (this.#memory.groupId === null) {
+        this.#memory.groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
+        await this.#deps.tabGroups?.update(this.#memory.groupId, { title: this.#deps.title.slice(0, TITLE_MAX), color: "blue" });
       } else {
-        await this.#deps.tabs.group({ groupId: this.#groupId, tabIds: [tabId] });
+        await this.#deps.tabs.group({ groupId: this.#memory.groupId, tabIds: [tabId] }).catch(async () => {
+          this.#memory.groupId = await this.#deps.tabs.group({ tabIds: [tabId] });
+        });
       }
     } catch {
     }
@@ -2170,6 +2199,7 @@ var layer = {
     tools.gate = {
       check: async (q) => {
         layer.questions.push(q);
+        if (script.beforeAnswer) await tools.session.cdp.send("Runtime.evaluate", { expression: script.beforeAnswer });
         return { decision: answers.shift() ?? "deny" };
       },
       blocked: (site) => script.blocked.includes(site)

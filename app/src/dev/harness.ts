@@ -57,11 +57,16 @@ const layer = {
     releaseAll() { return this.instance!.releaseAll(); },
   },
   /** A scripted gate for scenarios: answers in order, and the blocked sites. */
-  async setGate(tabId: number, script: {answers: string[]; blocked: string[]}) {
+  async setGate(tabId: number, script: {answers: string[]; blocked: string[]; beforeAnswer?: string}) {
     const tools = await toolsFor(tabId, 26214);
     const answers = [...script.answers];
     tools.gate = {
-      check: async q => { layer.questions.push(q); return {decision: (answers.shift() ?? 'deny') as 'allow'}; },
+      check: async q => {
+        layer.questions.push(q);
+        // A scenario can change the page while "the user" decides, as a person clicking around would.
+        if (script.beforeAnswer) await tools.session.cdp.send('Runtime.evaluate', {expression: script.beforeAnswer});
+        return {decision: (answers.shift() ?? 'deny') as 'allow'};
+      },
       blocked: site => script.blocked.includes(site),
     };
   },

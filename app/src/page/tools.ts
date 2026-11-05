@@ -28,12 +28,12 @@ export interface ToolResult {
 export interface GateQuestion { action: string; ref: string; role: string; name: string; category: Category; site: string; url: string }
 export type GateAnswer = {decision: 'allow'} | {decision: 'deny'} | {decision: 'user-did-it'} | {decision: 'cancel'};
 /** What the agent above the layer decides about a dangerous action; the layer only asks and obeys. */
-export interface Gate { check(q: GateQuestion): Promise<GateAnswer>; blocked(site: string): boolean }
+export interface Gate { check(q: GateQuestion): Promise<GateAnswer>; blocked(site: string): boolean | Promise<boolean> }
 
 const CATEGORY_TEXT: Record<Category, string> = {
-  pay: 'оплата', access: 'выдача доступа', secret: 'ввод секрета', delete: 'удаление', logout: 'выход из аккаунта', send: 'отправка', submit: 'отправка формы',
+  pay: 'оплата', access: 'выдача доступа', secret: 'ввод секрета', captcha: 'капча', delete: 'удаление', logout: 'выход из аккаунта', send: 'отправка', submit: 'отправка формы',
 };
-const ORDER: Category[] = ['pay', 'access', 'secret', 'delete', 'logout', 'send', 'submit'];
+const ORDER: Category[] = ['pay', 'access', 'secret', 'captcha', 'delete', 'logout', 'send', 'submit'];
 
 export const PAGE_START = '<<<page-content>>>';
 const NAVIGATION_TIMEOUT_MS = 15000;
@@ -99,8 +99,13 @@ export class PageTools {
   }
 
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
-  protected async run(fn: () => Promise<string | {head: string; body: string; notices: string[]}>, allowDuringDialog = false): Promise<ToolResult> {
+  protected async run(fn: () => Promise<string | {head: string; body: string; notices: string[]}>, allowDuringDialog = false, allowOnBlocked = false): Promise<ToolResult> {
     try {
+      // Wherever the tab ended up (a redirect, back, a script), a blocked site is not worked on; only leaving it is.
+      if (this.gate && !allowOnBlocked) {
+        const site = siteOf(this.session.frames.main().url);
+        if (site && await this.gate.blocked(site)) throw new PageError('SITE_BLOCKED', `Вкладка открыта на сайте ${site}, который пользователь заблокировал: здесь помощник ничего не делает. Уйдите со страницы (navigate) или закончите задачу.`);
+      }
       if (this.dialog && !allowDuringDialog) {
         throw new PageError('DIALOG_OPEN', `На странице открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте на него (handle_dialog), если этот инструмент есть, иначе попросите пользователя закрыть диалог.`);
       }
@@ -164,10 +169,10 @@ export class PageTools {
   async #gate(verb: string, ref: string, target: Target, actions: ('activate' | 'enter' | 'type')[]): Promise<'go' | 'asked' | 'user-did-it'> {
     if (!actions.length) return 'go';
     const facts = await targetFacts(this.session, target);
-    if (facts.href && this.gate?.blocked(siteOf(facts.href))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(facts.href)} заблокирован пользователем: ссылку не открываю.`);
+    if (facts.href && await this.gate?.blocked(siteOf(facts.href))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(facts.href)} заблокирован пользователем: ссылку не открываю.`);
     if (!this.gate) return 'go';
     const found = actions.map(action => classify({action, role: target.record.role, name: target.record.name, tag: facts.tag, type: facts.type,
-      inForm: facts.inForm, formHasPassword: facts.formHasPassword, secretField: isSecretField(facts.attrs), nearbyText: facts.nearby}))
+      inForm: facts.inForm, formHasPassword: facts.formHasPassword, secretField: isSecretField(facts.attrs), nearbyText: facts.nearby, contentEditable: facts.contentEditable}))
       .filter((c): c is Category => c !== null);
     if (!found.length) return 'go';
     const category = ORDER.find(c => found.includes(c))!;
@@ -263,17 +268,19 @@ export class PageTools {
         throw new PageError('NOT_FOUND', `Для ${args.key} укажите ref элемента: так помощник знает, что именно нажимается.`);
       }
       if (args.ref) {
-        // The key goes to whatever has focus, so the target must hold it before anything is sent.
-        const target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
-        await waitActionable(this.session, target, {pointer: false}, this.observer.probes);
-        await this.session.cdp.send('DOM.focus', {backendNodeId: target.record.backendNodeId}, target.frame.sessionId).catch(() => {});
-        if (!await isFocused(this.session, target)) {
-          throw new PageError('NOT_EDITABLE', `Элемент ${args.ref} не принимает фокус клавиатуры: клавиша не отправлена. Для него используйте click.`);
-        }
+        // The gate comes first; then the target is checked and focused right before the key, since the key goes to
+        // whatever has focus and the page may have moved on while the user decided.
+        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
         if (args.key === 'Enter' || args.key === 'Space') {
           const control = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'clickable'].includes(target.record.role);
           const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? 'activate' : 'enter']);
           if (verdict === 'user-did-it') return `press ${args.key} [${args.ref}]: шаг выполнен пользователем сам, событие помощником не отправлено`;
+          if (verdict === 'asked') target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        }
+        await waitActionable(this.session, target, {pointer: false}, this.observer.probes);
+        await this.session.cdp.send('DOM.focus', {backendNodeId: target.record.backendNodeId}, target.frame.sessionId).catch(() => {});
+        if (!await isFocused(this.session, target)) {
+          throw new PageError('NOT_EDITABLE', `Элемент ${args.ref} не принимает фокус клавиатуры: клавиша не отправлена. Для него используйте click.`);
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(`press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
@@ -331,7 +338,7 @@ export class PageTools {
           await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
         } else {
           const url = normalizeUrl(args.url ?? '');
-          if (this.gate?.blocked(siteOf(url))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(url)} заблокирован пользователем.`);
+          if (await this.gate?.blocked(siteOf(url))) throw new PageError('SITE_BLOCKED', `Сайт ${siteOf(url)} заблокирован пользователем.`);
           what = `переход на ${url}`;
           const r = await cdp.send<{errorText?: string}>('Page.navigate', {url});
           if (r.errorText) throw new PageError('NOT_FOUND', `Не удалось открыть ${url}: ${r.errorText}.`);
@@ -342,7 +349,7 @@ export class PageTools {
       }
       const o = await this.observer.snapshot({budget: this.budget});
       return `${what}: ${status ? `HTTP ${status} · ` : ''}${o.header}\nСделайте snapshot, чтобы увидеть элементы страницы.`;
-    });
+    }, false, true);
   }
 
   wait(args: {text?: string; ref?: string; gone?: boolean; timeoutMs?: number}): Promise<ToolResult> {
@@ -436,13 +443,26 @@ export class PageTools {
         const url = this.session.frames.main().url;
         const answer = await this.gate.check({action: 'handle_dialog', ref: '', role: 'dialog', name: was.message, category: 'secret', site: siteOf(url), url});
         if (answer.decision === 'user-did-it') { this.dialog = undefined; return `диалог «${was.message}»: пользователь ответил сам`; }
-        throw new PageError('USER_DECLINED', 'Ответ на диалог страницы — шаг пользователя; он не ответил.');
+        // Left open, the dialog would block every tool: it is dismissed.
+        await this.session.cdp.send('Page.handleJavaScriptDialog', {accept: false}).catch(() => {});
+        this.dialog = undefined;
+        throw new PageError('USER_DECLINED', 'Ответ на диалог страницы — шаг пользователя; он не ответил, диалог закрыт отменой.');
+      }
+      // Accepting a confirm() completes what the page asks («Удалить запись?»): its message is classified like a button.
+      if (was.type === 'confirm' && args.accept && this.gate) {
+        const category = classify({action: 'activate', role: 'button', name: was.message, tag: 'button', type: '', inForm: false, formHasPassword: false, secretField: false, nearbyText: ''});
+        if (category) {
+          const url = this.session.frames.main().url;
+          const answer = await this.gate.check({action: 'handle_dialog', ref: '', role: 'dialog', name: was.message, category, site: siteOf(url), url});
+          if (answer.decision === 'user-did-it') return `диалог «${was.message}»: пользователь ответил сам`;
+          if (answer.decision !== 'allow') throw new PageError('USER_DECLINED', `Пользователь не разрешил подтвердить «${was.message}». Ответьте на диалог отменой (accept=false).`);
+        }
       }
       await this.session.cdp.send('Page.handleJavaScriptDialog', {accept: args.accept, promptText: args.text});
       this.dialog = undefined;
       await new Promise(r => setTimeout(r, 300));
       return `диалог ${was.type} «${was.message}»: ${args.accept ? 'принят' : 'отклонён'}`;
-    }, true);
+    }, true, true);
   }
 
   /** For the e2e harness: runs the checks before an action on a label, without acting. */

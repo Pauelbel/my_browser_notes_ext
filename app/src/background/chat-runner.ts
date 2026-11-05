@@ -60,6 +60,8 @@ export class ChatRunner {
   #active = 0;
   #beat: ReturnType<typeof setInterval> | null = null;
   readonly #broker: PromptBroker;
+  /** Each chat's agent tabs and tab group, so its next reply continues in them (kept while the worker lives). */
+  readonly #tabMemory = new Map<string, {members: Set<number>; groupId: number | null}>();
 
   constructor(deps: ChatDeps) {
     this.#deps = deps;
@@ -179,12 +181,16 @@ export class ChatRunner {
     const agent = agentMode ? createAgentSession({
       tabId: command.tabId!, profile, conversation, settings, openTab: this.#deps.openTab!, tabsApi: this.#deps.tabsApi!, tabGroupsApi: this.#deps.tabGroupsApi,
       notes: this.#deps.notes, setSiteRule: this.#deps.setSiteRule ?? (async () => {}),
+      readSettings: this.#deps.settings,
+      readPermission: async () => (await getConversation(conversationId))?.permission ?? conversation.permission,
+      memory: this.#tabMemory.get(conversationId) ?? (this.#tabMemory.set(conversationId, {members: new Set(), groupId: null}).get(conversationId)!),
       ask: prompt => this.#broker.ask({...prompt, conversationId}, run.controller.signal),
     }) : null;
     const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes) : {};
     const toolNames = Object.keys(tools) as ToolName[];
     let steps = 0;
     let doneSummary: string | null = null;
+    let doneOutcome = 'success';
     /** Text that comes after a tool call starts a new paragraph instead of running into the earlier text. */
     let afterTool = false;
     const emitStep = (step: ToolStep) => this.#deps.emit({type: 'step', conversationId: reply.conversationId, messageId: reply.id, step});
@@ -197,8 +203,9 @@ export class ChatRunner {
       for await (const part of parts) {
         if (part.type === 'step') { steps++; continue; }
         if (part.type === 'tool-call' && part.name === 'done') {
-          const input = part.input as {summary?: string};
+          const input = part.input as {summary?: string; outcome?: string};
           doneSummary = input?.summary ?? '';
+          doneOutcome = input?.outcome ?? 'success';
         }
         if (part.type === 'tool-call') {
           const step: ToolStep = {id: part.id, name: part.name as ToolName, input: describeInput(part.input), status: 'running', summary: ''};
@@ -229,7 +236,13 @@ export class ChatRunner {
       reply.status = run.controller.signal.aborted ? 'stopped' : 'done';
       if (agent && reply.status === 'done') {
         // The agent's answer is its text, or the summary it gave to done; a run cut by the cap says so.
-        if (!reply.text.trim() && doneSummary) reply.text = doneSummary;
+        // Local models narrate between calls: the summary given to done is the real answer and is always shown.
+        if (doneSummary) {
+          const label = doneOutcome === 'failed' ? 'Итог (не удалось): ' : doneOutcome === 'partial' ? 'Итог (выполнено частично): ' : '';
+          const summary = `${label}${doneSummary}`;
+          if (!reply.text.trim()) reply.text = summary;
+          else if (!reply.text.trim().endsWith(doneSummary.trim())) reply.text = `${reply.text.trimEnd()}\n\n${summary}`;
+        }
         if (doneSummary === null && steps >= AGENT_MAX_STEPS) {
           reply.text = `${reply.text.trim() ? `${reply.text.trim()}\n\n` : ''}Достигнут лимит шагов (${AGENT_MAX_STEPS}): задача выполнена не полностью.`;
         }

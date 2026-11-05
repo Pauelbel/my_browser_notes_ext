@@ -75,7 +75,8 @@ export function buildChatTools(profile: Profile, page: () => Promise<ReadTools>,
 }
 
 export function buildAgentTools(profile: Profile, ctx: AgentContext): ToolSet {
-  const enabled = new Set(profile.tools.filter(t => !NOT_YET.includes(t)));
+  // done and ask_user are always there: without them a run cannot finish properly or hand a step to the user.
+  const enabled = new Set([...profile.tools.filter(t => !NOT_YET.includes(t)), 'done' as ToolName, 'ask_user' as ToolName]);
   const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes);
   // Methods are called on the tab's tools object: they use `this`.
   const page = async (name: keyof ActTools, args: unknown): Promise<string> => {
@@ -127,6 +128,17 @@ export function buildAgentTools(profile: Profile, ctx: AgentContext): ToolSet {
   add('done', {description: 'Закончить задачу: outcome — success, partial или failed; summary — ответ пользователю.',
     inputSchema: z.object({outcome: z.enum(['success', 'partial', 'failed']), summary: z.string()}),
     execute: async (a: {summary: string}) => a.summary});
+  // The model may call several tools in one turn; one page cannot take two actions at once, so they run in order.
+  let queue: Promise<unknown> = Promise.resolve();
+  for (const def of Object.values(tools)) {
+    const execute = def.execute;
+    if (!execute) continue;
+    def.execute = (input: unknown, options: unknown) => {
+      const run = queue.then(() => (execute as (i: unknown, o: unknown) => unknown)(input, options));
+      queue = run.catch(() => {});
+      return run as never;
+    };
+  }
   return tools;
 }
 
