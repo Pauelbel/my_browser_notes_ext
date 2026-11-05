@@ -6,11 +6,11 @@ import type {Profile, ToolName} from '../store/types.ts';
 import type {NotesApi} from './notes.ts';
 import type {ScreenshotStore} from './screenshots.ts';
 
-export const CHAT_TOOLS: ToolName[] = ['snapshot', 'find', 'read', 'notes_search', 'notes_read'];
-/** Not offered yet: the QA checks are wired in the next task. Screenshot depends on the model seeing images. */
-const NOT_YET: ToolName[] = ['console_log', 'network_log', 'page_checks'];
+export const CHAT_TOOLS: ToolName[] = ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks'];
+/** Every tool is offered now; screenshot additionally depends on the model seeing images. */
+const NOT_YET: ToolName[] = [];
 
-export interface ImageOptions { vision?: boolean; screenshots?: ScreenshotStore }
+export interface ImageOptions { vision?: boolean; screenshots?: ScreenshotStore; /** Agent mode: QA tools may reload the page. */ allowReload?: boolean }
 
 type Result = Promise<{ok: boolean; text: string}>;
 export interface ReadTools {
@@ -18,6 +18,9 @@ export interface ReadTools {
   find(args: {role?: string; name?: string; text?: string}): Result;
   read(args: {ref?: string}): Result;
   screenshot?(): Promise<{ok: boolean; text: string; image?: string}>;
+  consoleLog?(args: {level?: 'error' | 'warning' | 'all'; reload?: boolean}): Result;
+  networkLog?(args: {reload?: boolean}): Result;
+  pageChecks?(): Result;
 }
 export interface ActTools extends ReadTools {
   click(args: {ref: string}): Result;
@@ -61,6 +64,28 @@ function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes
       },
     });
   }
+  // QA tools only read; reloading the page to collect from the start is an action, so only Agent mode offers it.
+  const call = async (name: 'consoleLog' | 'networkLog' | 'pageChecks', args: object) => {
+    const target = await page();
+    const fn = target[name] as ((a: object) => Result) | undefined;
+    return fn ? (await fn.call(target, args)).text : 'ошибка: инструмент недоступен';
+  };
+  const reload = images.allowReload ? {reload: z.boolean().optional().describe('перезагрузить страницу и собрать с начала загрузки')} : {};
+  if (enabled.has('console_log')) tools.console_log = tool({
+    description: 'Ошибки и предупреждения консоли страницы (сгруппированы, со счётчиком и местом в коде).',
+    inputSchema: z.object({level: z.enum(['error', 'warning', 'all']).optional(), ...reload}),
+    execute: async input => call('consoleLog', input),
+  });
+  if (enabled.has('network_log')) tools.network_log = tool({
+    description: 'Упавшие сетевые запросы страницы: ответы 4xx/5xx, ошибки сети, CORS, блокировки.',
+    inputSchema: z.object({...reload}),
+    execute: async input => call('networkLog', input),
+  });
+  if (enabled.has('page_checks')) tools.page_checks = tool({
+    description: 'Проверки страницы на баги: битые картинки, ссылки этого сайта с ошибкой, элементы без подписи, картинки без alt, переполнение по ширине, перекрывающиеся элементы.',
+    inputSchema: z.object({}),
+    execute: async () => call('pageChecks', {}),
+  });
   if (enabled.has('snapshot')) tools.snapshot = tool({
     description: 'Описание текущей страницы: интерактивные элементы с метками вроде [a12] (кнопки, ссылки, поля) и заголовки. '
       + 'mode="all" добавляет текст страницы; window="all" — всю страницу, а не только около экрана.',
@@ -91,13 +116,13 @@ function readTools(enabled: Set<ToolName>, page: () => Promise<ReadTools>, notes
 }
 
 export function buildChatTools(profile: Profile, page: () => Promise<ReadTools>, notes?: NotesApi, images: ImageOptions = {}): ToolSet {
-  return readTools(new Set(profile.tools.filter(t => CHAT_TOOLS.includes(t) || t === 'screenshot')), page, notes, images);
+  return readTools(new Set(profile.tools.filter(t => CHAT_TOOLS.includes(t) || t === 'screenshot')), page, notes, {...images, allowReload: false});
 }
 
 export function buildAgentTools(profile: Profile, ctx: AgentContext): ToolSet {
   // done and ask_user are always there: without them a run cannot finish properly or hand a step to the user.
   const enabled = new Set([...profile.tools.filter(t => !NOT_YET.includes(t)), 'done' as ToolName, 'ask_user' as ToolName]);
-  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes, {vision: ctx.vision, screenshots: ctx.screenshots});
+  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes, {vision: ctx.vision, screenshots: ctx.screenshots, allowReload: true});
   // Methods are called on the tab's tools object: they use `this`.
   const page = async (name: keyof ActTools, args: unknown): Promise<string> => {
     const target = await ctx.tabs.current();

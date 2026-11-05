@@ -13,7 +13,7 @@ export default async function ({openPage, base, server, sleep, log}) {
   const inTab = (tabId, expr) => dev.eval(`layer.rawEval(${tabId}, ${JSON.stringify(expr)})`);
   const must = (cond, message) => { if (!cond) throw new Error(message); };
 
-  async function task(page, text, {permission = 'auto', onPrompt} = {}) {
+  async function task(page, text, {permission = 'auto', onPrompt, profile = 'assistant'} = {}) {
     const tab = await dev.eval(`layer.openTab(${JSON.stringify(`${server.origin}/${page}`)})`);
     await sleep(800);
     await chat.eval(`document.getElementById('newChat').click()`);
@@ -21,6 +21,7 @@ export default async function ({openPage, base, server, sleep, log}) {
     await chat.eval(`(() => {
       const m = document.getElementById('modeSelect'); m.value = 'agent'; m.dispatchEvent(new Event('change'));
       const p = document.getElementById('permissionSelect'); p.value = '${permission}'; p.dispatchEvent(new Event('change'));
+      const pr = document.getElementById('profileSelect'); pr.value = '${profile}'; pr.dispatchEvent(new Event('change'));
       chrome.tabs.query = async () => [{id: ${tab}}];
       const t = document.querySelector('#prompt'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
     })()`);
@@ -67,4 +68,11 @@ export default async function ({openPage, base, server, sleep, log}) {
   const four = await task('basic.html', 'Перейди по ссылке на вторую страницу и скажи, какой там заголовок.');
   must(four.steps.some(s => /click|navigate/.test(s)), 'не было перехода');
   must(four.answer.includes('Вторая страница'), `в ответе нет заголовка: ${four.answer}`);
+
+  const five = await task('qa.html', 'Найди баги на этой странице.', {profile: 'qa'});
+  const qaSteps = five.steps.filter(s => /console_log|network_log|page_checks|screenshot/.test(s));
+  must(qaSteps.length >= 2, `мало QA-шагов: ${five.steps.join(' | ')}`);
+  must(/консол|console|Не удалось загрузить настройки/i.test(five.answer), 'в ответе нет ошибки консоли');
+  must(/404/.test(five.answer), 'в ответе нет 404');
+  must(/картинк|изображен|image|nope\.png/i.test(five.answer), 'в ответе нет битой картинки');
 }

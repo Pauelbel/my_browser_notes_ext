@@ -10,9 +10,9 @@ const [assistant, qa] = DEFAULT_PROFILES;
 const json = (body: unknown) => (async () => new Response(JSON.stringify(body), {status: 200})) as unknown as typeof fetch;
 
 test('buildChatTools: только читающие инструменты, отмеченные в профиле', () => {
-  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read']);
+  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks']);
   const notes = {search: async () => '', read: async () => '', create: async () => '', append: async () => ''};
-  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['find', 'notes_read', 'notes_search', 'read', 'snapshot']);
+  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['console_log', 'find', 'network_log', 'notes_read', 'notes_search', 'page_checks', 'read', 'snapshot']);
   const noFind: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'find')};
   assert.ok(!('find' in buildChatTools(noFind, async () => { throw new Error('не нужно'); })));
 });
@@ -57,10 +57,10 @@ const fakeCtx = () => {
   };
 };
 
-test('buildAgentTools: действия из профиля, без screenshot и QA-проверок', () => {
+test('buildAgentTools: действия из профиля; screenshot только при vision', () => {
   const keys = Object.keys(buildAgentTools(qa, fakeCtx().ctx));
   for (const name of ['click', 'type', 'navigate', 'tabs', 'highlight', 'ask_user', 'notes_append', 'done', 'snapshot']) assert.ok(keys.includes(name), name);
-  for (const name of ['screenshot', 'console_log', 'network_log', 'page_checks']) assert.ok(!keys.includes(name), name);
+  assert.ok(!keys.includes('screenshot'));
   const noClick: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'click')};
   assert.ok(!('click' in buildAgentTools(noClick, fakeCtx().ctx)));
 });
@@ -78,4 +78,14 @@ test('buildAgentTools: done возвращает итог, click идёт в т�
 test('agentSystemPrompt: правила работы, шаги пользователя, маркеры, роль', () => {
   const text = agentSystemPrompt(qa, ['click', 'done', 'ask_user']);
   for (const piece of ['done', 'takeover', '<<<page-content>>>', '<<<note>>>', qa.prompt.slice(0, 30), 'Не показывай пользователю метки']) assert.ok(text.includes(piece), piece);
+});
+
+test('QA-инструменты: в агенте все три, в чате console_log без reload', () => {
+  const agentKeys = Object.keys(buildAgentTools(qa, fakeCtx().ctx));
+  for (const name of ['console_log', 'network_log', 'page_checks']) assert.ok(agentKeys.includes(name), name);
+  const notes = {search: async () => '', read: async () => '', create: async () => '', append: async () => ''};
+  const chat = buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes) as any;
+  for (const name of ['console_log', 'network_log', 'page_checks']) assert.ok(name in chat, name);
+  assert.ok(!('reload' in chat.console_log.inputSchema.shape));
+  assert.ok('reload' in (buildAgentTools(qa, fakeCtx().ctx) as any).console_log.inputSchema.shape);
 });

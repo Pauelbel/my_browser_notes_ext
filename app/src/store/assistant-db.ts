@@ -3,7 +3,7 @@
 // Every write is announced on a BroadcastChannel so the worker, the side panel and a tab stay in step.
 import type {ChatMode, Conversation, Message, PermissionMode, Profile} from './types.ts';
 import {titleFrom} from './title.ts';
-import {DEFAULT_PROFILES} from '../agent/profiles.ts';
+import {DEFAULT_PROFILES, LEGACY_PROMPTS} from '../agent/profiles.ts';
 
 const CHANNEL = 'assistant';
 let db: IDBDatabase | null = null;
@@ -148,7 +148,15 @@ export async function markInterrupted(): Promise<number> {
 
 export async function listProfiles(): Promise<Profile[]> {
   const all = await done(database().transaction('profiles').objectStore('profiles').getAll() as IDBRequest<Profile[]>);
-  if (all.length) return all.sort((a, b) => a.createdAt - b.createdAt);
+  if (all.length) {
+    const upgraded = all.map(p => {
+      const fresh = DEFAULT_PROFILES.find(d => d.id === p.id);
+      return fresh && LEGACY_PROMPTS[p.id]?.includes(p.prompt) ? {...p, prompt: fresh.prompt} : p;
+    });
+    const changed = upgraded.filter((p, i) => p !== all[i]);
+    if (changed.length) await write(['profiles'], tx => { for (const p of changed) tx.objectStore('profiles').put(p); });
+    return upgraded.sort((a, b) => a.createdAt - b.createdAt);
+  }
   await write(['profiles'], tx => { for (const p of DEFAULT_PROFILES) tx.objectStore('profiles').put(p); });
   return DEFAULT_PROFILES.map(p => ({...p, tools: [...p.tools]}));
 }

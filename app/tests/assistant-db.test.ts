@@ -102,3 +102,13 @@ test('режим чата: старые записи — chat/ask, setConversati
   assert.equal(updated?.mode, 'agent');
   assert.equal(updated?.permission, 'auto');
 });
+
+test('профиль QA со старым промптом этапа 1 получает новый, изменённый пользователем — нет', async () => {
+  const {LEGACY_PROMPTS, DEFAULT_PROFILES} = await import('../src/agent/profiles.ts');
+  const fresh = DEFAULT_PROFILES.find(p => p.id === 'qa')!;
+  await db.putProfile({...fresh, prompt: LEGACY_PROMPTS.qa[0]});
+  await db.putProfile({...DEFAULT_PROFILES[0], prompt: 'Моя роль'});
+  const profiles = await db.listProfiles();
+  assert.equal(profiles.find(p => p.id === 'qa')?.prompt, fresh.prompt);
+  assert.equal(profiles.find(p => p.id === 'assistant')?.prompt, 'Моя роль');
+});
