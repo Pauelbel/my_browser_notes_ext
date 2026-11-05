@@ -30,16 +30,28 @@ export type StreamReply = (request: {
   prepareMessages?: <T>(messages: T[]) => T[];
 }) => AsyncIterable<StreamPart>;
 
+/**
+ * Loop options for streamText: tools, the step cap, the stop on a tool (done), and the history rewrite. AI SDK v7
+ * carries a returned history forward to later steps, so each step is rebuilt from the original messages and the
+ * responses so far; the rewrite then never works on its own earlier output (no duplicated images or marks).
+ */
+export function loopOptions(o: {tools?: ToolSet; maxSteps?: number; stopOnTool?: string; prepareMessages?: <T>(messages: T[]) => T[]}): Record<string, unknown> {
+  const {tools, maxSteps = 1, stopOnTool, prepareMessages} = o;
+  if (!tools || !Object.keys(tools).length) return {};
+  return {
+    tools,
+    stopWhen: stopOnTool
+      ? [stepCountIs(maxSteps), ({steps}: {steps: {toolCalls?: {toolName: string}[]}[]}) => Boolean(steps.at(-1)?.toolCalls?.some(c => c.toolName === stopOnTool))]
+      : stepCountIs(maxSteps),
+    ...(prepareMessages ? {prepareStep: ({initialMessages, responseMessages}: {initialMessages: unknown[]; responseMessages: unknown[]}) =>
+      ({messages: prepareMessages([...initialMessages, ...responseMessages])})} : {}),
+  };
+}
+
 export const ollamaStream: StreamReply = async function* ({settings, system, messages, signal, tools, maxSteps = 1, stopOnTool, prepareMessages}) {
   const provider = createOpenAICompatible({name: 'ollama', baseURL: `${settings.ollamaUrl}/v1`});
   const result = streamText({model: provider(settings.model), instructions: system, messages, abortSignal: signal, maxRetries: 1,
-    ...(tools && Object.keys(tools).length ? {
-      tools,
-      stopWhen: stopOnTool
-        ? [stepCountIs(maxSteps), ({steps}: {steps: {toolCalls?: {toolName: string}[]}[]}) => Boolean(steps.at(-1)?.toolCalls?.some(c => c.toolName === stopOnTool))]
-        : stepCountIs(maxSteps),
-      ...(prepareMessages ? {prepareStep: ({messages: history}: {messages: unknown[]}) => ({messages: prepareMessages(history)})} : {}),
-    } : {})} as Parameters<typeof streamText>[0]);
+    ...loopOptions({tools, maxSteps, stopOnTool, prepareMessages})} as Parameters<typeof streamText>[0]);
   for await (const part of result.fullStream) {
     if (part.type === 'text-delta') yield {type: 'text', delta: part.text};
     else if (part.type === 'reasoning-delta') yield {type: 'reasoning', delta: part.text};

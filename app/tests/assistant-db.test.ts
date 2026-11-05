@@ -112,3 +112,12 @@ test('профиль QA со старым промптом этапа 1 полу
   assert.equal(profiles.find(p => p.id === 'qa')?.prompt, fresh.prompt);
   assert.equal(profiles.find(p => p.id === 'assistant')?.prompt, 'Моя роль');
 });
+
+test('markInterrupted помечает шаги, которые шли, незавершёнными', async () => {
+  const c = await db.createConversation({profileId: 'assistant', firstMessage: 'a'});
+  await db.putMessage(message(c.id, {status: 'streaming', role: 'assistant', steps: [{id: '1', name: 'click', input: 'a1', status: 'running', summary: ''}]}));
+  await db.markInterrupted();
+  const [m] = await db.listMessages(c.id);
+  assert.equal(m.steps?.[0].status, 'error');
+  assert.match(m.steps?.[0].summary ?? '', /не завершён/);
+});

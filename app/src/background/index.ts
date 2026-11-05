@@ -35,6 +35,11 @@ const runner = new ChatRunner({
   setSiteRule: (site, rule) => setSiteRule(site, rule),
   capabilities: settings => modelCapabilities(settings.ollamaUrl, settings.model),
   contextTokens: settings => modelContext(settings.ollamaUrl, settings.model),
+  // Kept in session storage: it survives a worker restart, not a browser restart (tab ids change then anyway).
+  tabMemory: {
+    get: async id => (await chrome.storage.session.get(`tabs:${id}`))[`tabs:${id}`] as {members: number[]; groupId: number | null} | undefined,
+    set: async (id, m) => { await chrome.storage.session.set({[`tabs:${id}`]: m}); },
+  },
 });
 
 // A worker that starts has no replies in progress: any left `streaming` belonged to a worker that was stopped.

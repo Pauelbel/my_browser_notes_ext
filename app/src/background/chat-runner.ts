@@ -9,6 +9,8 @@ import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
 import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
 import {fitToContext} from '../agent/elision.ts';
+import {budgets} from '../agent/budgets.ts';
+import {UNFINISHED} from '../agent/history.ts';
 import {ScreenshotStore} from '../agent/screenshots.ts';
 import type {NotesApi} from '../agent/notes.ts';
 import type {Gate, PageTools} from '../page/index.ts';
@@ -48,6 +50,8 @@ export interface ChatDeps {
   capabilities?: (settings: Settings) => Promise<string[]>;
   /** The model's context window in tokens; 8192 when unknown. */
   contextTokens?: (settings: Settings) => Promise<number>;
+  /** Where each chat's agent tabs are kept across worker restarts (chrome.storage.session in the worker). */
+  tabMemory?: {get(id: string): Promise<{members: number[]; groupId: number | null} | undefined>; set(id: string, m: {members: number[]; groupId: number | null}): Promise<void>};
 }
 
 interface Run {
@@ -186,6 +190,10 @@ export class ChatRunner {
     // Agent mode needs a tab and the agent dependencies; otherwise the reply is a Chat-mode one.
     const agentMode = conversation.mode === 'agent' && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== undefined;
     const conversationId = conversation.id;
+    if (agentMode && !this.#tabMemory.has(conversationId)) {
+      const saved = await this.#deps.tabMemory?.get(conversationId).catch(() => undefined);
+      this.#tabMemory.set(conversationId, {members: new Set(saved?.members ?? []), groupId: saved?.groupId ?? null});
+    }
     const agent = agentMode ? createAgentSession({
       tabId: command.tabId!, profile, conversation, settings, openTab: this.#deps.openTab!, tabsApi: this.#deps.tabsApi!, tabGroupsApi: this.#deps.tabGroupsApi,
       notes: this.#deps.notes, setSiteRule: this.#deps.setSiteRule ?? (async () => {}),
@@ -204,12 +212,14 @@ export class ChatRunner {
     let afterTool = false;
     const emitStep = (step: ToolStep) => this.#deps.emit({type: 'step', conversationId: reply.conversationId, messageId: reply.id, step});
     try {
+      const system = agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames);
+      // One account of the window: what the system prompt and the tools take is not available to the history.
+      const budget = budgets({context, system, tools: tools as Record<string, {description?: string}>, agent: Boolean(agent)});
       const parts = this.#deps.stream({
-        settings, system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
-        messages: toModelMessages([...history, user], Math.round(context * 0.5)), signal: run.controller.signal, tools,
+        settings, system, messages: toModelMessages([...history, user], budget.history), signal: run.controller.signal, tools,
         ...(agent
-          ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, context))}
-          : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(m)}),
+          ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}
+          : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}),
       });
       for await (const part of parts) {
         if (part.type === 'step') { steps++; continue; }
@@ -266,7 +276,15 @@ export class ChatRunner {
       else { reply.status = 'failed'; reply.error = describeError(error, settings.ollamaUrl); }
     } finally {
       if (handle) await (handle as Promise<PageHandle>).then(h => h.release(), () => {});
-      if (agent) await agent.release().catch(() => {});
+      if (agent) {
+        await agent.release().catch(() => {});
+        const memory = this.#tabMemory.get(conversationId);
+        if (memory) await this.#deps.tabMemory?.set(conversationId, {members: [...memory.members], groupId: memory.groupId}).catch(() => {});
+      }
+    }
+    // A step still running when the reply ended may or may not have happened: it is marked so.
+    if (reply.steps?.some(s => s.status === 'running')) {
+      reply.steps = reply.steps.map(s => (s.status === 'running' ? {...s, status: 'error' as const, summary: UNFINISHED} : s));
     }
     if (!reply.steps!.length) delete reply.steps;
     await this.#finish(run, reply);

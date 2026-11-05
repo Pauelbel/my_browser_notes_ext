@@ -10,13 +10,19 @@ const SHORT_REPLY = 300;
 const LINE_REPLY = 120;
 // Order of shortening: older replies to 300 characters, then to one line, then hidden — never a user's message.
 
+/** The first step and the latest ones: what a continued task most needs is what happened last. A step that was
+ * still running when the reply ended is marked: it may or may not have happened. */
 function stepsLine(m: Message): string {
   if (!m.steps?.length) return '';
-  const shown = m.steps.slice(0, STEPS_MAX).map(s => `${s.name}${s.input ? ` ${s.input}` : ''}${s.status === 'error' ? ' (ошибка)' : ''}`);
-  const more = m.steps.length > STEPS_MAX ? ` · … и ещё ${m.steps.length - STEPS_MAX}` : '';
+  const label = (s: NonNullable<Message['steps']>[number]) => `${s.name}${s.input ? ` ${s.input}` : ''}${s.status === 'running' || s.summary === UNFINISHED ? ' (не завершён)' : s.status === 'error' ? ' (ошибка)' : ''}`;
+  const all = m.steps;
+  const shown = all.length > STEPS_MAX ? [label(all[0]), `… ещё ${all.length - STEPS_MAX}`, ...all.slice(-(STEPS_MAX - 1)).map(label)] : all.map(label);
   const end = m.status === 'interrupted' ? ' (прервано)' : m.status === 'stopped' ? ' (остановлено)' : '';
-  return `Шаги: ${shown.join(' · ')}${more}${end}`;
+  return `Шаги: ${shown.join(' · ')}${end}`;
 }
+
+/** The summary of a step that was running when its reply ended. */
+export const UNFINISHED = 'не завершён: ответ прерван';
 
 function replyContent(m: Message): string {
   const steps = stepsLine(m);

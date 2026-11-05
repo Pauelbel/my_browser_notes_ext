@@ -44,3 +44,10 @@ test('шаги агента в истории', () => {
   const stopped = toModelMessages([msg({role: 'user', text: 'удали'}), msg({role: 'assistant', text: 'Начал.', status: 'stopped', steps})]);
   assert.match(stopped[1].content, /^Начал\.\n\n\(Шаги: snapshot · click a5 \(остановлено\)\)$/);
 });
+
+test('строка шагов показывает первый и последние шаги, незавершённый шаг помечен', () => {
+  const steps = Array.from({length: 60}, (_, i) => ({id: String(i), name: 'click' as const, input: `a${i}`, status: (i === 59 ? 'running' : 'done') as 'done' | 'running', summary: ''}));
+  const out = toModelMessages([msg({role: 'user', text: 'делай'}), msg({role: 'assistant', text: '', status: 'interrupted', steps})]);
+  assert.match(out[1].content, /click a0 · … ещё 40 · click a41/);
+  assert.match(out[1].content, /click a59 \(не завершён\) \(прервано\)$/);
+});

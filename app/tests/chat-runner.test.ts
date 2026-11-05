@@ -532,3 +532,42 @@ test('шаги сохраняются в базу по ходу ответа, д
   assert.equal((await db.listMessages(id))[1].status, 'streaming');
   g.open(); await done;
 });
+
+test('шаг, который шёл при «Стопе», помечается незавершённым', async () => {
+  const g = gate();
+  const stream: StreamReply = async function* (request) {
+    yield {type: 'tool-call', id: 't1', name: 'snapshot', input: {}};
+    await Promise.race([g.promise, new Promise(r => request.signal.addEventListener('abort', r))]);
+    if (request.signal.aborted) throw new DOMException('aborted', 'AbortError');
+  };
+  const {page} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream, settings: async () => SETTINGS, emit: e => events.push(e), page});
+  const done = chat.send({...send('что там?'), tabId: 5});
+  await waitFor(() => events.some(e => e.type === 'step'));
+  chat.stop((events[0] as Extract<WorkerToPanel, {type: 'started'}>).conversation.id);
+  await done;
+  const step = (events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.steps?.[0];
+  assert.equal(step?.status, 'error');
+  assert.match(step?.summary ?? '', /не завершён/);
+});
+
+test('память вкладок чата переживает перезапуск фонового скрипта', async () => {
+  const stored = new Map<string, unknown>();
+  const tabMemory = {get: async (id: string) => stored.get(id) as any, set: async (id: string, m: unknown) => { stored.set(id, m); }};
+  let call = 0;
+  const stream: StreamReply = async function* (request) {
+    const input = call++ === 0 ? {action: 'open', url: 'https://example.com/'} : {action: 'switch', tabId: 99};
+    yield {type: 'tool-call', id: `t${call}`, name: 'tabs', input};
+    const output = String(await (request.tools!.tabs as any).execute(input, {toolCallId: `t${call}`, messages: []}));
+    yield {type: 'tool-result', id: `t${call}`, ok: !output.startsWith('ошибка'), summary: output.split('\n')[0]};
+  };
+  const make = (events: WorkerToPanel[]) => new ChatRunner({stream, settings: async () => SETTINGS, emit: e => events.push(e),
+    openTab: fakeAgentPage().openTab, tabsApi: fakeTabsApi(), setSiteRule: async () => SETTINGS, tabMemory});
+  const events: WorkerToPanel[] = [];
+  await make(events).send(agentSend('открой пример'));
+  const conversationId = (events.find(e => e.type === 'started') as Extract<WorkerToPanel, {type: 'started'}>).conversation.id;
+  const after: WorkerToPanel[] = [];
+  await make(after).send({...agentSend('продолжи'), conversationId, requestId: 'r2'});
+  assert.equal((after.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.steps?.[0].status, 'done');
+});

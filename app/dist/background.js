@@ -326,7 +326,7 @@ async function markInterrupted() {
     const store = tx.objectStore("messages");
     const all3 = await done(store.getAll());
     const found = all3.filter((m) => m.status === "streaming");
-    for (const m of found) store.put({ ...m, status: "interrupted" });
+    for (const m of found) store.put({ ...m, status: "interrupted", steps: m.steps?.map((s) => s.status === "running" ? { ...s, status: "error", summary: "\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D: \u043E\u0442\u0432\u0435\u0442 \u043F\u0440\u0435\u0440\u0432\u0430\u043D" } : s) });
     return found;
   });
   for (const id of new Set(stuck.map((m) => m.conversationId))) announce(id);
@@ -37348,6 +37348,15 @@ function createOpenAICompatible(options) {
 }
 
 // src/llm/stream.ts
+function loopOptions(o) {
+  const { tools, maxSteps = 1, stopOnTool, prepareMessages } = o;
+  if (!tools || !Object.keys(tools).length) return {};
+  return {
+    tools,
+    stopWhen: stopOnTool ? [isStepCount(maxSteps), ({ steps }) => Boolean(steps.at(-1)?.toolCalls?.some((c) => c.toolName === stopOnTool))] : isStepCount(maxSteps),
+    ...prepareMessages ? { prepareStep: ({ initialMessages, responseMessages }) => ({ messages: prepareMessages([...initialMessages, ...responseMessages]) }) } : {}
+  };
+}
 var ollamaStream = async function* ({ settings, system, messages, signal, tools, maxSteps = 1, stopOnTool, prepareMessages }) {
   const provider = createOpenAICompatible({ name: "ollama", baseURL: `${settings.ollamaUrl}/v1` });
   const result = streamText({
@@ -37356,11 +37365,7 @@ var ollamaStream = async function* ({ settings, system, messages, signal, tools,
     messages,
     abortSignal: signal,
     maxRetries: 1,
-    ...tools && Object.keys(tools).length ? {
-      tools,
-      stopWhen: stopOnTool ? [isStepCount(maxSteps), ({ steps }) => Boolean(steps.at(-1)?.toolCalls?.some((c) => c.toolName === stopOnTool))] : isStepCount(maxSteps),
-      ...prepareMessages ? { prepareStep: ({ messages: history }) => ({ messages: prepareMessages(history) }) } : {}
-    } : {}
+    ...loopOptions({ tools, maxSteps, stopOnTool, prepareMessages })
   });
   for await (const part of result.fullStream) {
     if (part.type === "text-delta") yield { type: "text", delta: part.text };
@@ -37444,11 +37449,13 @@ var SHORT_REPLY = 300;
 var LINE_REPLY = 120;
 function stepsLine(m) {
   if (!m.steps?.length) return "";
-  const shown = m.steps.slice(0, STEPS_MAX).map((s) => `${s.name}${s.input ? ` ${s.input}` : ""}${s.status === "error" ? " (\u043E\u0448\u0438\u0431\u043A\u0430)" : ""}`);
-  const more = m.steps.length > STEPS_MAX ? ` \xB7 \u2026 \u0438 \u0435\u0449\u0451 ${m.steps.length - STEPS_MAX}` : "";
+  const label = (s) => `${s.name}${s.input ? ` ${s.input}` : ""}${s.status === "running" || s.summary === UNFINISHED ? " (\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D)" : s.status === "error" ? " (\u043E\u0448\u0438\u0431\u043A\u0430)" : ""}`;
+  const all3 = m.steps;
+  const shown = all3.length > STEPS_MAX ? [label(all3[0]), `\u2026 \u0435\u0449\u0451 ${all3.length - STEPS_MAX}`, ...all3.slice(-(STEPS_MAX - 1)).map(label)] : all3.map(label);
   const end = m.status === "interrupted" ? " (\u043F\u0440\u0435\u0440\u0432\u0430\u043D\u043E)" : m.status === "stopped" ? " (\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E)" : "";
-  return `\u0428\u0430\u0433\u0438: ${shown.join(" \xB7 ")}${more}${end}`;
+  return `\u0428\u0430\u0433\u0438: ${shown.join(" \xB7 ")}${end}`;
 }
+var UNFINISHED = "\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D: \u043E\u0442\u0432\u0435\u0442 \u043F\u0440\u0435\u0440\u0432\u0430\u043D";
 function replyContent(m) {
   const steps = stepsLine(m);
   if (!steps) return m.text;
@@ -37697,14 +37704,16 @@ function describeInput(input2) {
 
 // src/agent/elision.ts
 var ELIDED = "[\u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0441\u043A\u0440\u044B\u0442\u043E \u2014 \u043F\u0440\u0438 \u043D\u0435\u043E\u0431\u0445\u043E\u0434\u0438\u043C\u043E\u0441\u0442\u0438 \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot]";
-var READING_TOOLS = /* @__PURE__ */ new Set(["snapshot", "read", "find", "notes_read", "notes_search", "screenshot", "console_log", "network_log", "page_checks"]);
-function elideOldPages(messages, keep = 3) {
+var PAGE_TOOLS = /* @__PURE__ */ new Set(["snapshot", "read", "find", "notes_read", "notes_search", "screenshot"]);
+var QA_TOOLS = /* @__PURE__ */ new Set(["console_log", "network_log", "page_checks"]);
+var READING_TOOLS = /* @__PURE__ */ new Set([...PAGE_TOOLS, ...QA_TOOLS]);
+function elideOldPages(messages, keep = 3, kinds = PAGE_TOOLS) {
   const pages = [];
   messages.forEach((m, i) => {
     const msg = m;
     if (msg.role !== "tool" || !Array.isArray(msg.content)) return;
     msg.content.forEach((part, j) => {
-      if (part.toolName && READING_TOOLS.has(part.toolName) && typeof part.output?.value === "string") pages.push([i, j]);
+      if (part.toolName && kinds.has(part.toolName) && typeof part.output?.value === "string") pages.push([i, j]);
     });
   });
   const drop = new Set(pages.slice(0, Math.max(0, pages.length - keep)).map(([i, j]) => `${i}:${j}`));
@@ -37739,13 +37748,14 @@ function estimateTokens(messages) {
   }
   return Math.ceil(chars / 4) + images * IMAGE_TOKENS;
 }
+var HIDDEN = " [\u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438 \u0441\u043A\u0440\u044B\u0442\u044B]";
 function shortenOldReceipts(messages, keep) {
   const receipts = [];
   messages.forEach((m, i) => {
     const msg = m;
     if (msg.role !== "tool" || !Array.isArray(msg.content)) return;
     msg.content.forEach((p, j) => {
-      if (p.toolName && !READING_TOOLS.has(p.toolName) && typeof p.output?.value === "string") receipts.push([i, j]);
+      if (p.toolName && !READING_TOOLS.has(p.toolName) && typeof p.output?.value === "string" && !p.output.value.includes(HIDDEN)) receipts.push([i, j]);
     });
   });
   const cut2 = new Set(receipts.slice(0, Math.max(0, receipts.length - keep)).map(([i, j]) => `${i}:${j}`));
@@ -37755,15 +37765,65 @@ function shortenOldReceipts(messages, keep) {
     if (!Array.isArray(msg.content) || !msg.content.some((_, j) => cut2.has(`${i}:${j}`))) return m;
     return { ...msg, content: msg.content.map((p, j) => {
       if (!cut2.has(`${i}:${j}`)) return p;
-      const lines = String(p.output.value).split("\n").filter((l) => !l.startsWith("<<<"));
-      return { ...p, output: { ...p.output, value: `${lines[0] ?? ""} [\u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438 \u0441\u043A\u0440\u044B\u0442\u044B]` } };
+      const value = String(p.output.value);
+      const lines = value.split("\n").filter((l) => !l.startsWith("<<<"));
+      const marked = value.includes("<<<page-content>>>");
+      const kept = `${lines[0] ?? ""}${HIDDEN}`;
+      return { ...p, output: { ...p.output, value: marked ? `<<<page-content>>>
+${kept}
+<<<end-page-content>>>` : kept } };
     }) };
   });
 }
+function dropOldReasoning(messages, keep) {
+  const idx = messages.map((m, i) => m.role === "assistant" && Array.isArray(m.content) ? i : -1).filter((i) => i >= 0);
+  const old = new Set(idx.slice(0, Math.max(0, idx.length - keep)));
+  if (!old.size) return messages;
+  return messages.map((m, i) => {
+    if (!old.has(i)) return m;
+    const msg = m;
+    const content = msg.content.filter((p) => p.type !== "reasoning");
+    return content.length === msg.content.length ? m : { ...msg, content };
+  });
+}
+function shortenOldReplies(messages) {
+  const idx = messages.map((m, i) => m.role === "assistant" && typeof m.content === "string" ? i : -1).filter((i) => i >= 0);
+  idx.pop();
+  if (!idx.length) return messages;
+  return messages.map((m, i) => {
+    if (!idx.includes(i)) return m;
+    const text3 = m.content;
+    return text3.length > 120 ? { ...m, content: `${text3.slice(0, 119)}\u2026[\u0441\u043E\u043A\u0440\u0430\u0449\u0435\u043D\u043E]` } : m;
+  });
+}
+function collapseOldSteps(messages, keep) {
+  const pairs = [];
+  messages.forEach((m, i) => {
+    const msg = m;
+    const next = messages[i + 1];
+    if (msg.role === "assistant" && Array.isArray(msg.content) && msg.content.some((p) => p.type === "tool-call") && next?.role === "tool") pairs.push(i);
+  });
+  const drop = pairs.slice(0, Math.max(0, pairs.length - keep));
+  if (!drop.length) return messages;
+  const names = drop.flatMap((i) => messages[i].content.filter((p) => p.type === "tool-call").map((p) => p.toolName));
+  const gone = new Set(drop.flatMap((i) => [i, i + 1]));
+  const out = [];
+  messages.forEach((m, i) => {
+    if (i === drop[0]) out.push({ role: "assistant", content: `\u0420\u0430\u043D\u0435\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043D\u044B\u0435 \u0448\u0430\u0433\u0438 (\u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438 \u0441\u043A\u0440\u044B\u0442\u044B): ${names.join(" \xB7 ")}` });
+    if (!gone.has(i)) out.push(m);
+  });
+  return out;
+}
 function fitToContext(messages, contextTokens) {
   const limit = 0.7 * contextTokens;
-  if (estimateTokens(messages) <= limit) return messages;
-  const levels = [(m) => elideOldPages(m, 3), (m) => elideOldPages(m, 1), (m) => shortenOldReceipts(elideOldPages(m, 1), 10)];
+  const levels = [
+    (m) => elideOldPages(m, 3),
+    (m) => elideOldPages(m, 1),
+    (m) => shortenOldReceipts(elideOldPages(m, 1), 10),
+    (m) => elideOldPages(dropOldReasoning(shortenOldReceipts(elideOldPages(m, 1), 10), 2), 3, QA_TOOLS),
+    (m) => shortenOldReplies(elideOldPages(dropOldReasoning(shortenOldReceipts(elideOldPages(m, 1), 10), 2), 3, QA_TOOLS)),
+    (m) => collapseOldSteps(shortenOldReplies(elideOldPages(dropOldReasoning(shortenOldReceipts(elideOldPages(m, 1), 10), 2), 3, QA_TOOLS)), 10)
+  ];
   let out = messages;
   for (const level of levels) {
     out = level(messages);
@@ -37772,7 +37832,18 @@ function fitToContext(messages, contextTokens) {
   return out;
 }
 
+// src/agent/budgets.ts
+var OUTPUT_RESERVE = 2048;
+var PER_TOOL = 60;
+function budgets(o) {
+  const toolTokens = Object.values(o.tools).reduce((sum, t) => sum + PER_TOOL + Math.ceil((t.description ?? "").length / 3), 0);
+  const overhead = Math.ceil(o.system.length / 3) + toolTokens;
+  const run = Math.max(1024, o.context - overhead - OUTPUT_RESERVE);
+  return { run, history: Math.round(run * (o.agent ? 0.25 : 0.5)) };
+}
+
 // src/agent/screenshots.ts
+var CAPTION = "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0447\u0430\u0441\u0442\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439):";
 var ScreenshotStore = class {
   #latest = null;
   put(base64Jpeg) {
@@ -37780,6 +37851,7 @@ var ScreenshotStore = class {
   }
   inject(messages) {
     if (!this.#latest) return messages;
+    messages = messages.filter((m) => !(m.role === "user" && Array.isArray(m.content) && (m.content[0]?.text ?? "").startsWith(CAPTION)));
     let at = -1;
     messages.forEach((m, i) => {
       const msg = m;
@@ -37787,7 +37859,7 @@ var ScreenshotStore = class {
     });
     if (at < 0) return messages;
     const image = { role: "user", content: [
-      { type: "text", text: "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442 \u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0447\u0430\u0441\u0442\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439):" },
+      { type: "text", text: CAPTION },
       { type: "image", image: this.#latest, mediaType: "image/jpeg" }
     ] };
     return [...messages.slice(0, at + 1), image, ...messages.slice(at + 1)];
@@ -40570,6 +40642,10 @@ var ChatRunner = class {
     const context = await this.#deps.contextTokens?.(settings).catch(() => 8192) ?? 8192;
     const agentMode = conversation.mode === "agent" && this.#deps.openTab && this.#deps.tabsApi && command.tabId !== null && command.tabId !== void 0;
     const conversationId = conversation.id;
+    if (agentMode && !this.#tabMemory.has(conversationId)) {
+      const saved = await this.#deps.tabMemory?.get(conversationId).catch(() => void 0);
+      this.#tabMemory.set(conversationId, { members: new Set(saved?.members ?? []), groupId: saved?.groupId ?? null });
+    }
     const agent = agentMode ? createAgentSession({
       tabId: command.tabId,
       profile,
@@ -40596,13 +40672,15 @@ var ChatRunner = class {
     let afterTool = false;
     const emitStep = (step) => this.#deps.emit({ type: "step", conversationId: reply.conversationId, messageId: reply.id, step });
     try {
+      const system = agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames);
+      const budget = budgets({ context, system, tools, agent: Boolean(agent) });
       const parts = this.#deps.stream({
         settings,
-        system: agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames),
-        messages: toModelMessages([...history, user], Math.round(context * 0.5)),
+        system,
+        messages: toModelMessages([...history, user], budget.history),
         signal: run.controller.signal,
         tools,
-        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(fitToContext(m, context)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(m) }
+        ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(fitToContext(m, budget.run)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(fitToContext(m, budget.run)) }
       });
       for await (const part of parts) {
         if (part.type === "step") {
@@ -40669,8 +40747,16 @@ ${summary}`;
     } finally {
       if (handle) await handle.then((h) => h.release(), () => {
       });
-      if (agent) await agent.release().catch(() => {
-      });
+      if (agent) {
+        await agent.release().catch(() => {
+        });
+        const memory = this.#tabMemory.get(conversationId);
+        if (memory) await this.#deps.tabMemory?.set(conversationId, { members: [...memory.members], groupId: memory.groupId }).catch(() => {
+        });
+      }
+    }
+    if (reply.steps?.some((s) => s.status === "running")) {
+      reply.steps = reply.steps.map((s) => s.status === "running" ? { ...s, status: "error", summary: UNFINISHED } : s);
     }
     if (!reply.steps.length) delete reply.steps;
     await this.#finish(run, reply);
@@ -40725,7 +40811,14 @@ var runner = new ChatRunner({
   notes: notesApi,
   setSiteRule: (site, rule) => setSiteRule(site, rule),
   capabilities: (settings) => modelCapabilities(settings.ollamaUrl, settings.model),
-  contextTokens: (settings) => modelContext(settings.ollamaUrl, settings.model)
+  contextTokens: (settings) => modelContext(settings.ollamaUrl, settings.model),
+  // Kept in session storage: it survives a worker restart, not a browser restart (tab ids change then anyway).
+  tabMemory: {
+    get: async (id) => (await chrome.storage.session.get(`tabs:${id}`))[`tabs:${id}`],
+    set: async (id, m) => {
+      await chrome.storage.session.set({ [`tabs:${id}`]: m });
+    }
+  }
 });
 var ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
 chrome.runtime.onConnect.addListener((port) => {

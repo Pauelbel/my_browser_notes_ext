@@ -136,7 +136,8 @@ export async function markInterrupted(): Promise<number> {
     const store = tx.objectStore('messages');
     const all = await done(store.getAll() as IDBRequest<Message[]>);
     const found = all.filter(m => m.status === 'streaming');
-    for (const m of found) store.put({...m, status: 'interrupted'});
+    // A step that was running when the worker stopped may or may not have happened: it is marked as unfinished.
+    for (const m of found) store.put({...m, status: 'interrupted', steps: m.steps?.map(s => (s.status === 'running' ? {...s, status: 'error' as const, summary: 'не завершён: ответ прерван'} : s))});
     return found;
   });
   // Each affected chat is announced, so a panel showing one re-reads it.
