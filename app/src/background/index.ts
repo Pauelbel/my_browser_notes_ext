@@ -29,6 +29,7 @@ const runner = new ChatRunner({
     const tools = new PageTools(session, {budget: pageBudget(context), gate});
     return {tools, release: async () => { tools.dispose(); await release(session); }};
   },
+  currentTab: async tabId => { const tab = await chrome.tabs.get(tabId); return {title: tab.title, url: tab.url}; },
   tabsApi: chrome.tabs,
   tabGroupsApi: chrome.tabGroups,
   notes: notesApi,

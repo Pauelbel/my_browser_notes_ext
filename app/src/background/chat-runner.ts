@@ -1,7 +1,8 @@
 // Runs chat replies in the service worker: one reply at a time per conversation, streamed to every panel and saved
 // as it grows, so closing the panel does not lose it and a worker that stops leaves a reply marked as interrupted.
 import type {PanelAnswer, PanelToWorker, PendingPrompt, WorkerToPanel} from '../shared/protocol.ts';
-import type {StreamReply} from '../llm/stream.ts';
+import type {ModelMessage, StreamReply} from '../llm/stream.ts';
+import {pageText} from '../page/tools.ts';
 import type {ChatMode, Message, PermissionMode, Settings, SiteRule, ToolName, ToolStep} from '../store/types.ts';
 import {createConversation, deleteConversation, getConversation, listMessages, listProfiles, putMessage, setConversationMode, setConversationProfile} from '../store/assistant-db.ts';
 import {agentSystemPrompt, systemPrompt} from '../agent/prompt.ts';
@@ -16,6 +17,15 @@ import type {NotesApi} from '../agent/notes.ts';
 import type {Gate, PageTools} from '../page/index.ts';
 import {PromptBroker} from './prompts.ts';
 import {createAgentSession} from './agent-session.ts';
+
+/** The open tab's title and address after the user's latest message (sent to the model only, never stored). */
+function withOpenTab(messages: ModelMessage[], tab: {title?: string; url?: string} | null): ModelMessage[] {
+  const last = messages.at(-1);
+  if (!tab || !tab.url || last?.role !== 'user') return messages;
+  const note = `Открытая сейчас вкладка:\n${pageText([tab.title, tab.url].filter(Boolean).join(' · '), '', [])}\n`
+    + 'Описания страниц из прошлых ответов могли устареть: о странице отвечай и действуй по тому, что посмотрел в этом ответе.';
+  return [...messages.slice(0, -1), {role: 'user', content: `${last.content}\n\n${note}`}];
+}
 
 /** Step arguments longer than this (as JSON) are not kept for the history. */
 const ARGS_MAX = 2000;
@@ -43,6 +53,8 @@ export interface ChatDeps {
   heartbeatMs?: number;
   /** Opens the page tools for a tab; without it the model gets no page tools. */
   page?: (tabId: number) => Promise<PageHandle>;
+  /** The title and address of a tab, without attaching to it: Chat mode tells the model which page is open now. */
+  currentTab?: (tabId: number) => Promise<{title?: string; url?: string}>;
   /** Agent mode: opens a tab's page tools with the gate of this reply. Without it there is no Agent mode. */
   openTab?: (tabId: number, gate: Gate) => Promise<{tools: PageTools; release(): Promise<void>}>;
   tabsApi?: typeof chrome.tabs;
@@ -208,6 +220,9 @@ export class ChatRunner {
     }) : null;
     const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, {vision, screenshots}) : {};
     const toolNames = Object.keys(tools) as ToolName[];
+    // Chat mode: the page in the history may not be the one open now (the user moved on), so the model is told which is.
+    const openTab = !agent && this.#deps.page && this.#deps.currentTab && command.tabId !== null && command.tabId !== undefined
+      ? await this.#deps.currentTab(command.tabId).catch(() => null) : null;
     let steps = 0;
     let doneSummary: string | null = null;
     let doneOutcome = 'success';
@@ -219,7 +234,7 @@ export class ChatRunner {
       // One account of the window: what the system prompt and the tools take is not available to the history.
       const budget = budgets({context, system, tools: tools as Record<string, {description?: string}>, agent: Boolean(agent)});
       const parts = this.#deps.stream({
-        settings, system, messages: toModelMessages([...history, user], budget.history), signal: run.controller.signal, tools,
+        settings, system, messages: withOpenTab(toModelMessages([...history, user], budget.history), openTab), signal: run.controller.signal, tools,
         ...(agent
           ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}
           : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}),

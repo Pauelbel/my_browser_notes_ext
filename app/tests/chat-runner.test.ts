@@ -571,3 +571,22 @@ test('память вкладок чата переживает перезапу
   await make(after).send({...agentSend('продолжи'), conversationId, requestId: 'r2'});
   assert.equal((after.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>).message.steps?.[0].status, 'done');
 });
+
+test('чат сообщает модели, какая вкладка открыта сейчас; сохранённый вопрос не меняется', async () => {
+  // The user moved to another video and asked to highlight the song's name: the model answered from the old page in the history.
+  const model = toolCallingModel();
+  const {page} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream: model.stream, settings: async () => SETTINGS, emit: e => events.push(e), page,
+    currentTab: async tabId => ({title: `Hellhills - Getting Bored ${tabId}`, url: 'https://www.youtube.com/watch?v=xvu'})});
+  await chat.send({...send('подсвети название песни'), tabId: 5});
+  const last = model.calls[0].messages.at(-1)!;
+  assert.equal(last.role, 'user');
+  const content = last.content as string;
+  assert.ok(content.startsWith('подсвети название песни'), content);
+  assert.match(content, /<<<page-content>>>\nHellhills - Getting Bored 5 · https:\/\/www\.youtube\.com\/watch\?v=xvu\n<<<end-page-content>>>/);
+  assert.match(content, /могли устареть/);
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  const stored = await db.listMessages(finished.conversationId);
+  assert.equal(stored[0].text, 'подсвети название песни');
+});
