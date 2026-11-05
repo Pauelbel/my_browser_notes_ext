@@ -496,3 +496,39 @@ test('итог done не теряется за текстом по ходу ра
   assert.match(text, /Сначала посмотрю страницу\./);
   assert.match(text, /Итог \(выполнено частично\): Удалил один черновик из двух\./);
 });
+
+test('продолжение берёт вкладки чата', async () => {
+  // One model, two replies: the first opens a tab, the second (a continuation in the same chat) switches to it.
+  let call = 0;
+  const stream: StreamReply = async function* (request) {
+    const input = call++ === 0 ? {action: 'open', url: 'https://example.com/'} : {action: 'switch', tabId: 99};
+    yield {type: 'tool-call', id: `t${call}`, name: 'tabs', input};
+    const output = String(await (request.tools!.tabs as any).execute(input, {toolCallId: `t${call}`, messages: []}));
+    yield {type: 'tool-result', id: `t${call}`, ok: !output.startsWith('ошибка'), summary: output.split('\n')[0]};
+  };
+  const {chat, events} = agentRunner({stream, requests: []} as any);
+  await chat.send(agentSend('открой пример'));
+  const conversationId = (events.find(e => e.type === 'started') as Extract<WorkerToPanel, {type: 'started'}>).conversation.id;
+  await chat.send({...agentSend('продолжи'), conversationId, requestId: 'r2'});
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.equal(finished.message.steps?.[0].status, 'done', JSON.stringify(finished.message.steps));
+});
+
+test('шаги сохраняются в базу по ходу ответа, до его конца', async () => {
+  const g = gate();
+  const stream: StreamReply = async function* (request) {
+    yield {type: 'tool-call', id: 't1', name: 'snapshot', input: {}};
+    await (request.tools!.snapshot as any).execute({}, {toolCallId: 't1', messages: []});
+    yield {type: 'tool-result', id: 't1', ok: true, summary: 'ok'};
+    await g.promise;
+  };
+  const {page} = fakePage();
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream, settings: async () => SETTINGS, emit: e => events.push(e), page, saveEveryMs: 0});
+  const done = chat.send({...send('что там?'), tabId: 5});
+  await waitFor(() => events.filter(e => e.type === 'step').length === 2);
+  const id = (events[0] as Extract<WorkerToPanel, {type: 'started'}>).conversation.id;
+  await waitFor(async () => (await db.listMessages(id))[1]?.steps?.[0]?.status === 'done');
+  assert.equal((await db.listMessages(id))[1].status, 'streaming');
+  g.open(); await done;
+});

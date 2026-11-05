@@ -40617,6 +40617,7 @@ var ChatRunner = class {
           const step = { id: part.id, name: part.name, input: describeInput(part.input), status: "running", summary: "" };
           reply.steps.push(step);
           emitStep(step);
+          if (!run.deleted) await putMessage({ ...reply, steps: [...reply.steps] });
           continue;
         }
         if (part.type === "tool-result") {
@@ -40626,6 +40627,7 @@ var ChatRunner = class {
             emitStep(reply.steps[index]);
           }
           afterTool = true;
+          if (!run.deleted) await putMessage({ ...reply, steps: [...reply.steps] });
           continue;
         }
         if (part.type === "text") {

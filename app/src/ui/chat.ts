@@ -31,6 +31,8 @@ export interface ChatView {
 }
 
 const STATUS_TEXT: Partial<Record<Message['status'], string>> = {stopped: 'остановлено', interrupted: 'прервано'};
+/** What «Продолжить» sends: the agent picks up an interrupted task from where it stopped. */
+export const CONTINUE_TEXT = 'Продолжи задачу с того места, где остановился. Сначала посмотри, что сейчас на странице.';
 
 export function initChat(client: Client): ChatView {
   let state: ChatState = emptyChat;
@@ -108,6 +110,7 @@ export function initChat(client: Client): ChatView {
       });
     }
     renderPrompts();
+    renderContinue();
     if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
     const busy = state.running || state.pendingRequestId !== null;
     send.innerHTML = icons[state.running ? 'stop' : 'send'];
@@ -153,6 +156,24 @@ export function initChat(client: Client): ChatView {
       card.append(text, row);
       transcript.append(card);
     }
+  }
+
+  /** «Продолжить» under the last reply of an agent task that was interrupted or stopped. */
+  function renderContinue(): void {
+    const last = state.messages.at(-1);
+    const show = !state.running && !state.pendingRequestId && modeSelect.value === 'agent' && last?.role === 'assistant'
+      && (last.status === 'interrupted' || last.status === 'stopped');
+    let button = transcript.querySelector<HTMLButtonElement>('.continue-btn');
+    if (!show) { button?.remove(); return; }
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'continue-btn';
+      button.textContent = '↻ Продолжить';
+      button.dataset.tip = 'Агент продолжит задачу с того места, где остановился';
+      button.onclick = () => { input.value = CONTINUE_TEXT; void submit(); };
+    }
+    transcript.append(button);
   }
 
   // ——— Mode ———

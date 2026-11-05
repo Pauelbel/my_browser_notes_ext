@@ -283,3 +283,6 @@ dialog .check input { display: inline; width: auto; margin: 0; accent-color: var
 #siteRules .row { margin: 4px 0; }
 #siteRules .site { flex: 1; font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; }
 dialog #siteRuleSite { flex: 1; min-width: 0; margin: 0; }
+
+.continue-btn { align-self: flex-start; padding: 4px 12px; border: 1px solid var(--accent); border-radius: 6px; color: var(--accent); background: var(--bg); font-size: 13px; }
+.continue-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }

@@ -222,6 +222,7 @@ export class ChatRunner {
           const step: ToolStep = {id: part.id, name: part.name as ToolName, input: describeInput(part.input), status: 'running', summary: ''};
           reply.steps!.push(step);
           emitStep(step);
+          if (!run.deleted) await putMessage({...reply, steps: [...reply.steps!]});
           continue;
         }
         if (part.type === 'tool-result') {
@@ -231,6 +232,8 @@ export class ChatRunner {
             emitStep(reply.steps![index]);
           }
           afterTool = true;
+          // Steps are rare and saved every time, so a worker that stops mid-task leaves them with the interrupted reply.
+          if (!run.deleted) await putMessage({...reply, steps: [...reply.steps!]});
           continue;
         }
         if (part.type === 'text') {
