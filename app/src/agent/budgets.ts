@@ -4,9 +4,23 @@
 const OUTPUT_RESERVE = 2048;
 const PER_TOOL = 60;
 
+interface ToolDescription {description?: string}
+
+const toolTokens = (tools: Record<string, ToolDescription>) => Object.values(tools)
+  .reduce((sum, tool) => sum + PER_TOOL + Math.ceil((tool.description ?? '').length / 3), 0);
+
+/** Approximate occupancy of the model window before it starts generating an answer. */
+export function measureContext(o: {context: number; system: string; tools: Record<string, ToolDescription>;
+  messages: {content: unknown}[]}): {used: number; limit: number; system: number; tools: number; history: number} {
+  const system = Math.ceil(o.system.length / 3);
+  const tools = toolTokens(o.tools);
+  const history = Math.ceil(o.messages.reduce((sum, message) => sum
+    + (typeof message.content === 'string' ? message.content.length : JSON.stringify(message.content).length), 0) / 3);
+  return {used: Math.min(o.context, system + tools + history), limit: o.context, system, tools, history};
+}
+
 export function budgets(o: {context: number; system: string; tools: Record<string, {description?: string}>; agent: boolean}): {run: number; history: number} {
-  const toolTokens = Object.values(o.tools).reduce((sum, t) => sum + PER_TOOL + Math.ceil((t.description ?? '').length / 3), 0);
-  const overhead = Math.ceil(o.system.length / 3) + toolTokens;
+  const overhead = Math.ceil(o.system.length / 3) + toolTokens(o.tools);
   const run = Math.max(1024, o.context - overhead - OUTPUT_RESERVE);
   // An agent run grows with every step: the chat's earlier messages get a quarter, a chat reply gets half.
   return {run, history: Math.round(run * (o.agent ? 0.25 : 0.5))};

@@ -5,7 +5,7 @@ import {RefRegistry} from './refs.ts';
 import type {PageSession} from './session.ts';
 import {PageError} from './errors.ts';
 import type {OutlineMode, WindowMode} from './render.ts';
-import {resolveTarget, type Target} from './resolve.ts';
+import {callOn, resolveTarget, type Target} from './resolve.ts';
 import {waitActionable, type Actionable} from './actionability.ts';
 import {startWatch, type Evidence} from './evidence.ts';
 import {click, hover, pressKey, wheel, watchDialog, KEYS, type DialogInfo, type KeyName} from './input.ts';
@@ -22,12 +22,25 @@ import {classify, USER_STEP, type Category} from './classify.ts';
 import {isSecretField} from './masking.ts';
 import {siteOf} from './site.ts';
 import {checkColor, Highlighter, type HighlightColor} from './highlight.ts';
+import {locatorFunction, verifyCdpLocator, type ConcreteLocatorKind, type LocatorCandidate, type LocatorInfo} from './locator.ts';
+import {locatorKindLabel, wrapLocatorAnswer, type LocatorKind} from '../agent/locator-intent.ts';
+import {renderReceipt, type ActionReceipt, type EffectVerdict, type Expectation, type PageChange, type SemanticTarget} from './receipt.ts';
 
 export interface ToolResult {
   text: string;
   ok: boolean;
+  /** Present for actions; callers should use this instead of parsing the human explanation. */
+  receipt?: ActionReceipt;
+  error?: {code: string; retryable: boolean; dispatched: boolean | 'unknown'};
   /** A screenshot (base64 JPEG), for models that see images. */
   image?: string;
+}
+
+interface PageBlock {head: string; body: string; notices: string[]}
+interface ActionOutput {
+  body: string;
+  receipt: ActionReceipt;
+  error?: {code: 'POSTCONDITION_UNMET'; message: string};
 }
 
 export interface GateQuestion { action: string; ref: string; role: string; name: string; category: Category; site: string; url: string }
@@ -72,7 +85,8 @@ export function errorResult(error: unknown): ToolResult {
   if (error instanceof PageError) {
     const delivered = error.delivered === true ? ' Событие ввода было отправлено: проверьте страницу, прежде чем повторять.'
       : error.delivered === 'unknown' ? ' Неизвестно, дошло ли событие ввода: проверьте страницу, прежде чем повторять.' : '';
-    return {ok: false, text: `ошибка ${error.code}: ${neutralize(error.message)}${delivered}`};
+    return {ok: false, text: `ошибка ${error.code}: ${neutralize(error.message)}${delivered}`,
+      error: {code: error.code, retryable: !['USER_DECLINED', 'SITE_BLOCKED', 'PAGE_NOT_SUPPORTED', 'SESSION_DISPOSED'].includes(error.code), dispatched: error.delivered}};
   }
   return {ok: false, text: `ошибка INTERNAL: ${neutralize(error instanceof Error ? error.message : String(error))}`};
 }
@@ -88,27 +102,36 @@ export class PageTools {
   readonly #highlights: {url: string; text?: string; element?: {role: string; name: string}; color: HighlightColor}[] = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog: DialogInfo | undefined;
+  #revision = 0;
+  #disposed = false;
+  readonly #offs: (() => void)[] = [];
 
   gate: Gate | undefined;
 
-  constructor(session: PageSession, options: {budget: number; gate?: Gate}) {
+  constructor(session: PageSession, options: {budget: number; gate?: Gate; ownerId?: string}) {
     this.session = session;
     this.budget = options.budget;
     this.gate = options.gate;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
-    this.highlighter = new Highlighter(session, this.observer.probes);
+    this.highlighter = new Highlighter(session, this.observer.probes, options.ownerId);
     this.diagnostics = session.diagnostics;
-    session.cdp.on((method, _params, sessionId) => { if (method === 'Page.loadEventFired' && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300); });
-    session.cdp.on(method => { if (method === 'Page.javascriptDialogClosed') this.dialog = undefined; });
-    session.cdp.on((method, params) => { if (method === 'Page.javascriptDialogOpening') this.dialog = {type: params.type, message: params.message}; });
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => { if (method === 'Page.loadEventFired' && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300); }));
+    this.#offs.push(session.cdp.on(method => { if (method === 'Page.javascriptDialogClosed') this.dialog = undefined; }));
+    this.#offs.push(session.cdp.on((method, params) => { if (method === 'Page.javascriptDialogOpening') this.dialog = {type: params.type, message: params.message}; }));
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => {
+      if (!sessionId && (method === 'Page.frameNavigated' || method === 'Page.navigatedWithinDocument' || method === 'DOM.documentUpdated')) this.#revision++;
+    }));
     // A frame that loads a new document makes its labels stale.
-    session.frames.onChange(() => { for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId); });
+    this.#offs.push(session.frames.onChange(() => { for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId); }));
   }
 
+  get revision(): number { return this.#revision; }
+
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
-  protected async run(fn: () => Promise<string | {head: string; body: string; notices: string[]}>, allowDuringDialog = false, allowOnBlocked = false): Promise<ToolResult> {
+  protected async run(fn: () => Promise<string | PageBlock | ActionOutput>, allowDuringDialog = false, allowOnBlocked = false): Promise<ToolResult> {
     try {
+      if (this.#disposed) throw new PageError('SESSION_DISPOSED', 'Сессия страницы уже закрыта: откройте страницу заново.');
       // Wherever the tab ended up (a redirect, back, a script), a blocked site is not worked on; only leaving it is.
       if (this.gate && !allowOnBlocked) {
         const site = siteOf(this.session.frames.main().url);
@@ -118,7 +141,14 @@ export class PageTools {
         throw new PageError('DIALOG_OPEN', `На странице открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте на него (handle_dialog), если этот инструмент есть, иначе попросите пользователя закрыть диалог.`);
       }
       const out = await fn();
-      return {ok: true, text: typeof out === 'string' ? pageText('', out, []) : pageText(out.head, out.body, out.notices)};
+      if (typeof out === 'string') return {ok: true, text: pageText('', out, [])};
+      if ('receipt' in out) {
+        const receipt = renderReceipt(out.receipt);
+        if (out.error) return {ok: false, text: `ошибка ${out.error.code}: ${neutralize(out.error.message)}\n${receipt}`, receipt: out.receipt,
+          error: {code: out.error.code, retryable: true, dispatched: out.receipt.dispatched}};
+        return {ok: true, text: `${pageText('', out.body, [])}\n${receipt}`, receipt: out.receipt};
+      }
+      return {ok: true, text: pageText(out.head, out.body, out.notices)};
     } catch (error) {
       return errorResult(error);
     }
@@ -145,6 +175,47 @@ export class PageTools {
     });
   }
 
+  /** A fresh, independently verified locator for the current page revision. */
+  locator(args: {ref: string; kind?: LocatorKind}): Promise<ToolResult> {
+    return this.run(async () => ({head: `Локатор элемента · ${this.session.frames.main().url}`,
+      body: await this.#locatorBlock(args.ref, args.kind ?? 'best'), notices: []}));
+  }
+
+  async #locatorBlock(ref: string, requested: LocatorKind): Promise<string> {
+    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    const info = await callOn<LocatorInfo>(this.session, target.frame, target.objectId, locatorFunction);
+    const send = <T>(method: string, params?: object, sessionId?: string) => this.session.cdp.send<T>(method, params, sessionId);
+    const verified: LocatorCandidate[] = [];
+    for (const candidate of info.candidates) {
+      // XPath has no representation that crosses a Shadow DOM boundary.
+      if (candidate.kind === 'xpath' && info.scope === 'shadow-root') continue;
+      if (await verifyCdpLocator(send, candidate.query, target.record.backendNodeId, target.frame.sessionId)) verified.push(candidate);
+    }
+    const rank: ConcreteLocatorKind[] = ['testid', 'id', 'css', 'xpath', 'aria', 'role', 'name', 'class', 'tag'];
+    const score = (candidate: LocatorCandidate) => ({high: 0, medium: 10, low: 20})[candidate.stability]
+      + rank.indexOf(candidate.kind);
+    verified.sort((a, b) => score(a) - score(b));
+    const exact = requested === 'best' ? verified[0] : verified.find(candidate => candidate.kind === requested);
+    const chosen = exact ?? verified.find(candidate => candidate.kind !== requested);
+    const scope = info.scope === 'shadow-root'
+      ? 'Область: Shadow DOM; применять внутри соответствующего shadowRoot.'
+      : target.frame.parentFrameId ? 'Область: document соответствующего iframe.' : 'Область: основной document.';
+    const stability = {high: 'высокая', medium: 'средняя', low: 'низкая'} as const;
+    let answer: string;
+    if (!chosen) {
+      const label = requested === 'best' ? 'локатор' : locatorKindLabel(requested);
+      answer = `Не удалось построить проверенный уникальный ${label} для этого элемента. Подтверждённых альтернатив тоже нет.`;
+    } else {
+      const label = locatorKindLabel(chosen.kind);
+      const prefix = exact ? '' : `Не удалось построить проверенный уникальный ${locatorKindLabel(requested as Exclude<LocatorKind, 'best'>)} для этого элемента.\n\nБлижайший проверенный вариант — ${label}:\n`;
+      const language = chosen.kind === 'xpath' ? 'xpath'
+        : ['css', 'testid', 'aria', 'name', 'class', 'role'].includes(chosen.kind) ? 'css' : 'text';
+      answer = `${prefix}${exact ? `${label}:\n` : ''}\`\`\`${language}\n${chosen.value}\n\`\`\``
+        + `\n\nПроверено: ровно 1 совпадение и тот же DOM-элемент. Стабильность: ${stability[chosen.stability]}. ${scope} page.rev=${this.#revision}.`;
+    }
+    return wrapLocatorAnswer(answer);
+  }
+
   /** The page around the screen as full lines (text included), for the diff in a receipt. */
   async #describe(): Promise<string[]> {
     const {capture, roots} = await this.observer.observe();
@@ -157,7 +228,7 @@ export class PageTools {
    */
   async #act(verb: string, ref: string, needs: {pointer: boolean; editable?: boolean},
     dispatch: (t: Target, a: Actionable, dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>,
-    actions: ('activate' | 'enter' | 'type')[] = []): Promise<string> {
+    actions: ('activate' | 'enter' | 'type')[] = [], expect?: Expectation, forcedConsequential = false): Promise<ActionOutput | string> {
     let target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
     let actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     const verdict = await this.#gate(verb, ref, target, actions);
@@ -167,10 +238,15 @@ export class PageTools {
       target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
       actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     }
+    // Actionability may scroll and wait for several seconds. A reactive application can replace or rename the node
+    // during that time, so identity and geometry are checked once more immediately before any input is dispatched.
+    target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     // The baseline comes after the checks, which may have scrolled the target into view: scrolling is not a reaction.
     const before = await this.#describe();
     return this.#dispatchAndReport(`${verb} [${ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
-      dialog => dispatch(target, actionable, dialog), target.record.proxy === 'label' ? ` (клик по связанной подписи "${target.record.name}")` : '');
+      dialog => dispatch(target, actionable, dialog), target.record.proxy === 'label' ? ` (клик по связанной подписи "${target.record.name}")` : '',
+      verb, ref, expect, forcedConsequential || verdict === 'asked');
   }
 
   /** Classifies the action and asks the gate. 'go' when nothing needed asking. */
@@ -191,8 +267,19 @@ export class PageTools {
     throw new PageError('USER_DECLINED', `Пользователь не разрешил: ${verb} «${target.record.name}» (${CATEGORY_TEXT[category]}). Событие не отправлено; не пытайтесь сделать это другим способом.`);
   }
 
+  /** Gates an action whose side effects cannot be inferred from an element label. */
+  async #gateCategory(verb: string, category: Category): Promise<'go' | 'asked' | 'user-did-it'> {
+    if (!this.gate) return 'go';
+    const url = this.session.frames.main().url;
+    const answer = await this.gate.check({action: verb, ref: '', role: '', name: verb, category, site: siteOf(url), url});
+    if (answer.decision === 'allow') return 'asked';
+    if (answer.decision === 'user-did-it') return 'user-did-it';
+    throw new PageError('USER_DECLINED', `Пользователь не разрешил: ${verb} (${CATEGORY_TEXT[category]}). Действие не выполнено.`);
+  }
+
   async #dispatchAndReport(what: string, before: string[], frameIds: string[],
-    dispatch: (dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>, suffix = ''): Promise<string> {
+    dispatch: (dialog: Promise<DialogInfo>) => Promise<{dialog?: DialogInfo; note?: string} | void>, suffix = '',
+    action = what.split(' ', 1)[0], targetRef?: string, expect?: Expectation, consequential = false): Promise<ActionOutput> {
     const watch = await startWatch(this.session, this.observer.probes, frameIds);
     const dialog = watchDialog(this.session);
     let note = '';
@@ -206,84 +293,151 @@ export class PageTools {
     }
     const evidence = await watch.settle(() => dialog.current());
     dialog.off();
-    let effect: string;
+    let effect: {text: string; verdict: EffectVerdict; signals: string[]; changed: PageChange};
     try {
       effect = await this.#effectText(evidence, before);
     } catch (error) {
       // A dialog that opened after the reaction window is still this action's reaction.
       if (!(error instanceof PageError && error.code === 'DIALOG_OPEN') || !this.dialog) throw error;
-      effect = `открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте через handle_dialog.`;
+      effect = {text: `открыт диалог ${this.dialog.type}: «${this.dialog.message}». Ответьте через handle_dialog.`,
+        verdict: 'changed', signals: ['dialog'], changed: 'diff'};
     }
-    return `${what}${suffix}: событие отправлено${note ? ` · ${note}` : ''} · реакция: ${effect}`;
+    if (effect.verdict !== 'none') this.#revision++;
+    const postcondition = await this.#checkExpectation(expect, targetRef);
+    const receipt: ActionReceipt = {action, target: targetRef, dispatched: true, consequential,
+      effect: {verdict: effect.verdict, signals: effect.signals}, postcondition,
+      page: {revision: this.#revision, url: this.session.frames.main().url, changed: effect.changed}};
+    const body = `${what}${suffix}: событие отправлено${note ? ` · ${note}` : ''} · реакция: ${effect.text}`;
+    return postcondition.verdict === 'unmet'
+      ? {body, receipt, error: {code: 'POSTCONDITION_UNMET', message: `Действие отправлено, но ожидаемый результат не достигнут: ${postcondition.details ?? 'условие не выполнено'}. Сначала сделайте новый snapshot; не повторяйте действие вслепую.`}}
+      : {body, receipt};
   }
 
-  async #effectText(e: Evidence, before: string[]): Promise<string> {
+  async #effectText(e: Evidence, before: string[]): Promise<{text: string; verdict: EffectVerdict; signals: string[]; changed: PageChange}> {
     const counts = `мутаций ${e.mutations}, запросов ${e.requests}`;
     if (e.effect === 'dialog') {
       this.dialog = e.dialog;
-      return `открыт диалог ${e.dialog!.type}: «${e.dialog!.message}». Ответьте через handle_dialog.`;
+      return {text: `открыт диалог ${e.dialog!.type}: «${e.dialog!.message}». Ответьте через handle_dialog.`, verdict: 'changed', signals: ['dialog'], changed: 'diff'};
     }
-    if (e.effect === 'new_tab') return `открыта новая вкладка ${e.url ?? ''}`.trim();
+    if (e.effect === 'new_tab') return {text: `открыта новая вкладка ${e.url ?? ''}`.trim(), verdict: 'changed', signals: ['new_tab'], changed: 'full'};
     if (e.effect === 'navigated') {
       const o = await this.observer.snapshot({budget: this.budget});
-      return `переход на ${e.url ?? o.capture.url}\nновая страница: ${o.header}\nСделайте snapshot, чтобы увидеть её элементы.`;
+      return {text: `переход на ${e.url ?? o.capture.url}\nновая страница: ${o.header}\nСделайте snapshot, чтобы увидеть её элементы.`,
+        verdict: 'changed', signals: ['navigation'], changed: 'full'};
     }
     const diff = renderDiff(diffLines(before, await this.#describe()));
     let head = e.effect === 'changed' ? `страница изменилась (${counts})` : e.effect === 'requests' ? `ушли запросы (${e.requests}), описание около экрана не изменилось` : 'видимой реакции нет';
     if (e.sameDocument) head = `адрес изменился на ${e.sameDocument} (без перезагрузки) · ${head}`;
     if (e.notCommitted) head = `переход на ${e.notCommitted} запрошен, но не произошёл (загрузка файла, пустой ответ или отмена) · ${head}`;
-    return diff ? `${head}\nизменения:\n${diff}` : head;
+    const signals = [e.sameDocument ? 'same_document_navigation' : '', diff ? 'visible_diff' : '', e.mutations ? 'mutations' : '', e.requests ? 'network' : '', e.notCommitted ? 'navigation_not_committed' : ''].filter(Boolean);
+    const verdict: EffectVerdict = e.sameDocument || diff ? 'changed' : e.effect === 'none' ? 'none' : 'unattributable';
+    return {text: diff ? `${head}\nизменения:\n${diff}` : head, verdict, signals, changed: diff || e.sameDocument ? 'diff' : 'none'};
   }
 
-  click(args: {ref: string}): Promise<ToolResult> {
-    return this.run(() => this.#act('click', args.ref, {pointer: true}, (_t, a, dialog) => click(this.session, a.point, dialog), ['activate']));
+  async #checkExpectation(expect: Expectation | undefined, actionRef?: string): Promise<ActionReceipt['postcondition']> {
+    if (!expect || Object.values(expect).every(v => v === undefined)) return {verdict: 'not_checked'};
+    const failed: string[] = [];
+    const url = this.session.frames.main().url;
+    if (expect.url !== undefined && !url.includes(expect.url)) failed.push(`URL не содержит «${expect.url}»`);
+    if (expect.text !== undefined || expect.textGone !== undefined) {
+      const {roots} = await this.observer.quick();
+      const page = fold(flat(roots).map(n => `${n.name} ${n.value ?? ''}`).join(' '));
+      if (expect.text !== undefined && !page.includes(fold(expect.text))) failed.push(`текст «${expect.text}» не появился`);
+      if (expect.textGone !== undefined && page.includes(fold(expect.textGone))) failed.push(`текст «${expect.textGone}» не исчез`);
+    }
+    const ref = expect.ref ?? actionRef;
+    if (expect.gone !== undefined || expect.value !== undefined || expect.checked !== undefined) {
+      if (!ref) failed.push('для проверки элемента не указан ref');
+      else {
+        let target: Target | null = null;
+        try { target = await resolveTarget(this.session, this.refs, ref, this.observer.probes); } catch (error) {
+          if (!(expect.gone === true && error instanceof PageError && error.code === 'REF_STALE')) failed.push(`элемент ${ref} недоступен`);
+        }
+        if (expect.gone === true && target) failed.push(`элемент ${ref} не исчез`);
+        if (expect.gone === false && !target) failed.push(`элемент ${ref} отсутствует`);
+        if (target && expect.value !== undefined) {
+          const value = await callOn<string>(this.session, target.frame, target.objectId,
+            'function () { const c = this.control || this; return typeof c.value === "string" ? c.value : (c.innerText || ""); }');
+          if (value.replace(/\s+/g, ' ').trim() !== expect.value.replace(/\s+/g, ' ').trim()) failed.push(`значение элемента ${ref} не совпало`);
+        }
+        if (target && expect.checked !== undefined && await isChecked(this.session, target) !== expect.checked) failed.push(`состояние checked элемента ${ref} не совпало`);
+      }
+    }
+    return failed.length ? {verdict: 'unmet', details: failed.join('; ')} : {verdict: 'met'};
   }
 
-  hover(args: {ref: string}): Promise<ToolResult> {
-    return this.run(() => this.#act('hover', args.ref, {pointer: true}, async (_t, a) => { await hover(this.session, a.point); }));
+  async #refOf(args: {ref?: string; target?: SemanticTarget}): Promise<string> {
+    if (args.ref && args.target) throw new PageError('AMBIGUOUS_TARGET', 'Укажите либо ref, либо semantic target, но не оба сразу.');
+    if (args.ref) return args.ref;
+    if (args.target) return this.observer.semanticRef(args.target);
+    throw new PageError('NOT_FOUND', 'Укажите ref из snapshot или точную semantic target: role и name.');
   }
 
-  type(args: {ref: string; text: string; clear?: boolean; submit?: boolean}): Promise<ToolResult> {
-    return this.run(() => this.#act('type', args.ref, {pointer: false, editable: true}, async (t, a, dialog) => {
+  click(args: {ref?: string; target?: SemanticTarget; expect?: Expectation}): Promise<ToolResult> {
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act('click', ref, {pointer: true}, (_t, a, dialog) => click(this.session, a.point, dialog), ['activate'], args.expect);
+    });
+  }
+
+  hover(args: {ref?: string; target?: SemanticTarget; expect?: Expectation}): Promise<ToolResult> {
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act('hover', ref, {pointer: true}, async (_t, a) => { await hover(this.session, a.point); }, [], args.expect);
+    });
+  }
+
+  type(args: {ref?: string; target?: SemanticTarget; text: string; clear?: boolean; submit?: boolean; expect?: Expectation}): Promise<ToolResult> {
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act('type', ref, {pointer: false, editable: true}, async (t, a, dialog) => {
       await focusTarget(this.session, t, a.point, dialog);
       await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
       if (args.submit) { const r = await pressKey(this.session, 'Enter', dialog); if (r.dialog) return r; }
       return {note: `введено символов: ${args.text.length}${args.submit ? ', нажат Enter' : ''}`};
-    }, args.submit ? ['type', 'enter'] : ['type']));
-  }
-
-  set(args: {ref: string; value: string | boolean}): Promise<ToolResult> {
-    return this.run(async () => {
-      const probe = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
-      if (await isSelect(this.session, probe)) {
-        return this.#act('set', args.ref, {pointer: false}, async t => ({note: `выбрано «${await selectOption(this.session, t, String(args.value))}»`}));
-      }
-      const want = args.value === true || args.value === 'true' || args.value === 'on';
-      return this.#act('set', args.ref, {pointer: true}, async (t, a, dialog) => {
-        if (await isChecked(this.session, t) === want) return {note: `уже ${want ? 'включено' : 'выключено'}`};
-        const r = await click(this.session, a.point, dialog);
-        if (r.dialog) return r;
-        if (await isChecked(this.session, t) !== want) throw new PageError('VALUE_MISMATCH', `Состояние элемента ${args.ref} не изменилось после клика.`, true);
-        return {note: want ? 'включено' : 'выключено'};
-      }, ['activate']);
+      }, args.submit ? ['type', 'enter'] : ['type'], args.expect);
     });
   }
 
-  press(args: {key: KeyName; ref?: string}): Promise<ToolResult> {
+  set(args: {ref?: string; target?: SemanticTarget; value: string | boolean; expect?: Expectation}): Promise<ToolResult> {
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      const probe = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+      if (await isSelect(this.session, probe)) {
+        // A change handler may submit immediately, which cannot be inferred from the option's label.
+        const verdict = await this.#gateCategory('изменить значение списка', 'submit');
+        if (verdict === 'user-did-it') return `set [${args.ref}]: шаг выполнен пользователем сам`;
+        return this.#act('set', ref, {pointer: false}, async t => ({note: `выбрано «${await selectOption(this.session, t, String(args.value))}»`}), [], args.expect, verdict === 'asked');
+      }
+      const want = args.value === true || args.value === 'true' || args.value === 'on';
+      return this.#act('set', ref, {pointer: true}, async (t, a, dialog) => {
+        if (await isChecked(this.session, t) === want) return {note: `уже ${want ? 'включено' : 'выключено'}`};
+        const r = await click(this.session, a.point, dialog);
+        if (r.dialog) return r;
+        if (await isChecked(this.session, t) !== want) throw new PageError('VALUE_MISMATCH', `Состояние элемента ${ref} не изменилось после клика.`, true);
+        return {note: want ? 'включено' : 'выключено'};
+      }, ['activate'], args.expect);
+    });
+  }
+
+  press(args: {key: KeyName; ref?: string; target?: SemanticTarget; expect?: Expectation}): Promise<ToolResult> {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError('NOT_FOUND', `Клавиша ${args.key} не поддерживается. Есть: ${Object.keys(KEYS).join(', ')}.`);
-      if (!args.ref && (args.key === 'Enter' || args.key === 'Space')) {
+      const chosenRef = args.ref || args.target ? await this.#refOf(args) : undefined;
+      let consequential = false;
+      if (!chosenRef && (args.key === 'Enter' || args.key === 'Space')) {
         throw new PageError('NOT_FOUND', `Для ${args.key} укажите ref элемента: так помощник знает, что именно нажимается.`);
       }
-      if (args.ref) {
+      if (chosenRef) {
         // The gate comes first; then the target is checked and focused right before the key, since the key goes to
         // whatever has focus and the page may have moved on while the user decided.
-        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+        let target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         if (args.key === 'Enter' || args.key === 'Space') {
           const control = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'clickable'].includes(target.record.role);
-          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? 'activate' : 'enter']);
-          if (verdict === 'user-did-it') return `press ${args.key} [${args.ref}]: шаг выполнен пользователем сам, событие помощником не отправлено`;
-          if (verdict === 'asked') target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+          const verdict = await this.#gate(`press ${args.key}`, chosenRef, target, [control ? 'activate' : 'enter']);
+          consequential = verdict === 'asked';
+          if (verdict === 'user-did-it') return `press ${args.key} [${chosenRef}]: шаг выполнен пользователем сам, событие помощником не отправлено`;
+          if (verdict === 'asked') target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         }
         await waitActionable(this.session, target, {pointer: false}, this.observer.probes);
         await this.session.cdp.send('DOM.focus', {backendNodeId: target.record.backendNodeId}, target.frame.sessionId).catch(() => {});
@@ -291,10 +445,10 @@ export class PageTools {
           throw new PageError('NOT_EDITABLE', `Элемент ${args.ref} не принимает фокус клавиатуры: клавиша не отправлена. Для него используйте click.`);
         }
         const before = await this.#describe();
-        return this.#dispatchAndReport(`press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
-          dialog => pressKey(this.session, args.key, dialog));
+        return this.#dispatchAndReport(`press ${args.key} [${chosenRef}] ${target.record.role} "${target.record.name}"`, before, [target.frame.frameId],
+          dialog => pressKey(this.session, args.key, dialog), '', `press ${args.key}`, chosenRef, args.expect, consequential);
       }
-      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], dialog => pressKey(this.session, args.key, dialog));
+      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], dialog => pressKey(this.session, args.key, dialog), '', `press ${args.key}`, undefined, args.expect);
     });
   }
 
@@ -316,11 +470,12 @@ export class PageTools {
     });
   }
 
-  navigate(args: {url?: string; action?: 'back' | 'forward' | 'reload'}): Promise<ToolResult> {
+  navigate(args: {url?: string; action?: 'back' | 'forward' | 'reload'; expect?: Expectation}): Promise<ToolResult> {
     return this.run(async () => {
       const {cdp} = this.session;
       let what: string;
       let status: number | undefined;
+      let consequential = false;
       const mainId = this.session.frames.main().frameId;
       let done!: () => void;
       const arrived = new Promise<void>(r => { done = r; });
@@ -341,6 +496,10 @@ export class PageTools {
           await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
           restored();
         } else if (args.action === 'reload') {
+          // Reloading a POST result can repeat the transaction, including when a QA tool requested the reload.
+          const verdict = await this.#gateCategory('обновить страницу', 'submit');
+          if (verdict === 'user-did-it') return 'обновление: шаг выполнен пользователем сам';
+          consequential = verdict === 'asked';
           what = 'обновление';
           await cdp.send('Page.reload', {});
           await Promise.race([arrived, new Promise(r => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
@@ -356,7 +515,15 @@ export class PageTools {
         off();
       }
       const o = await this.observer.snapshot({budget: this.budget});
-      return `${what}: ${status ? `HTTP ${status} · ` : ''}${o.header}\nСделайте snapshot, чтобы увидеть элементы страницы.`;
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt: ActionReceipt = {action: 'navigate', dispatched: true, consequential,
+        effect: {verdict: 'changed', signals: ['navigation']}, postcondition,
+        page: {revision: this.#revision, url: this.session.frames.main().url, changed: 'full'}};
+      const body = `${what}: ${status ? `HTTP ${status} · ` : ''}${o.header}\nСделайте snapshot, чтобы увидеть элементы страницы.`;
+      return postcondition.verdict === 'unmet'
+        ? {body, receipt, error: {code: 'POSTCONDITION_UNMET', message: `Переход выполнен, но ожидаемый результат не достигнут: ${postcondition.details}.`}}
+        : {body, receipt};
     }, false, true);
   }
 
@@ -533,10 +700,11 @@ export class PageTools {
     }
   }
 
-  handleDialog(args: {accept: boolean; text?: string}): Promise<ToolResult> {
+  handleDialog(args: {accept: boolean; text?: string; expect?: Expectation}): Promise<ToolResult> {
     return this.run(async () => {
       if (!this.dialog) throw new PageError('NOT_FOUND', 'Сейчас на странице нет диалога.');
       const was = this.dialog;
+      let consequential = false;
       // Answering a page's prompt() is the user's own step: they may be asked for anything there.
       if (was.type === 'prompt' && this.gate) {
         const url = this.session.frames.main().url;
@@ -555,12 +723,21 @@ export class PageTools {
           const answer = await this.gate.check({action: 'handle_dialog', ref: '', role: 'dialog', name: was.message, category, site: siteOf(url), url});
           if (answer.decision === 'user-did-it') return `диалог «${was.message}»: пользователь ответил сам`;
           if (answer.decision !== 'allow') throw new PageError('USER_DECLINED', `Пользователь не разрешил подтвердить «${was.message}». Ответьте на диалог отменой (accept=false).`);
+          consequential = true;
         }
       }
       await this.session.cdp.send('Page.handleJavaScriptDialog', {accept: args.accept, promptText: args.text});
       this.dialog = undefined;
       await new Promise(r => setTimeout(r, 300));
-      return `диалог ${was.type} «${was.message}»: ${args.accept ? 'принят' : 'отклонён'}`;
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt: ActionReceipt = {action: 'handle_dialog', dispatched: true, consequential,
+        effect: {verdict: args.accept ? 'unattributable' : 'changed', signals: ['dialog_closed']}, postcondition,
+        page: {revision: this.#revision, url: this.session.frames.main().url, changed: 'diff'}};
+      const body = `диалог ${was.type} «${was.message}»: ${args.accept ? 'принят' : 'отклонён'}`;
+      return postcondition.verdict === 'unmet'
+        ? {body, receipt, error: {code: 'POSTCONDITION_UNMET', message: `Диалог закрыт, но ожидаемый результат не достигнут: ${postcondition.details}.`}}
+        : {body, receipt};
     }, true, true);
   }
 
@@ -577,6 +754,9 @@ export class PageTools {
   }
 
   dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    for (const off of this.#offs.splice(0)) off();
     this.observer.network.stop();
   }
 }

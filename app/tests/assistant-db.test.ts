@@ -118,6 +118,19 @@ test('markInterrupted помечает шаги, которые шли, неза
   await db.putMessage(message(c.id, {status: 'streaming', role: 'assistant', steps: [{id: '1', name: 'click', input: 'a1', status: 'running', summary: ''}]}));
   await db.markInterrupted();
   const [m] = await db.listMessages(c.id);
-  assert.equal(m.steps?.[0].status, 'error');
+  assert.equal(m.steps?.[0].status, 'uncertain');
   assert.match(m.steps?.[0].summary ?? '', /не завершён/);
+  assert.match(m.steps?.[0].summary ?? '', /результат действия неизвестен/);
+});
+
+test('markInterrupted отличает безопасное чтение от mutation с неизвестной доставкой', async () => {
+  const c = await db.createConversation({profileId: 'assistant', firstMessage: 'a'});
+  await db.putMessage(message(c.id, {status: 'streaming', role: 'assistant', steps: [
+    {id: '1', name: 'snapshot', input: '', status: 'running', summary: ''},
+    {id: '2', name: 'notes_append', input: '', status: 'running', summary: ''},
+  ]}));
+  await db.markInterrupted();
+  const [m] = await db.listMessages(c.id);
+  assert.match(m.steps?.[0].summary ?? '', /безопасно повторить/);
+  assert.match(m.steps?.[1].summary ?? '', /сначала проверьте/);
 });

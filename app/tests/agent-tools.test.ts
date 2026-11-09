@@ -10,9 +10,9 @@ const [assistant, qa] = DEFAULT_PROFILES;
 const json = (body: unknown) => (async () => new Response(JSON.stringify(body), {status: 200})) as unknown as typeof fetch;
 
 test('buildChatTools: читающие инструменты и подсветка, отмеченные в профиле', () => {
-  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks', 'highlight', 'clear_highlights']);
+  assert.deepEqual(CHAT_TOOLS, ['snapshot', 'find', 'read', 'locator', 'notes_search', 'notes_read', 'console_log', 'network_log', 'page_checks', 'highlight', 'clear_highlights']);
   const notes = {search: async () => '', read: async () => '', create: async () => '', append: async () => ''};
-  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['clear_highlights', 'console_log', 'find', 'highlight', 'network_log', 'notes_read', 'notes_search', 'page_checks', 'read', 'snapshot']);
+  assert.deepEqual(Object.keys(buildChatTools(qa, async () => { throw new Error('не нужно'); }, notes)).sort(), ['clear_highlights', 'console_log', 'find', 'highlight', 'locator', 'network_log', 'notes_read', 'notes_search', 'page_checks', 'read', 'snapshot']);
   const noFind: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'find')};
   assert.ok(!('find' in buildChatTools(noFind, async () => { throw new Error('не нужно'); })));
 });
@@ -49,6 +49,7 @@ test('systemPrompt: с инструментами — правило о соде
   assert.ok(systemPrompt(assistant, ['snapshot', 'highlight']).includes('highlight — подсветить'));
   assert.ok(withTools.includes('snapshot'));
   assert.ok(withTools.includes('Не показывай пользователю метки'));
+  assert.ok(withTools.includes('locator с его свежим ref'));
   const without = systemPrompt(assistant, []);
   assert.ok(without.includes('нет доступа к страницам'));
   assert.ok(!without.includes('<<<page-content>>>'));
@@ -75,9 +76,13 @@ const fakeCtx = () => {
 };
 
 test('buildAgentTools: действия из профиля; screenshot только при vision', () => {
-  const keys = Object.keys(buildAgentTools(qa, fakeCtx().ctx));
+  const built = buildAgentTools(qa, fakeCtx().ctx) as any;
+  const keys = Object.keys(built);
   for (const name of ['click', 'type', 'navigate', 'tabs', 'highlight', 'ask_user', 'notes_append', 'done', 'snapshot']) assert.ok(keys.includes(name), name);
   assert.ok(!keys.includes('screenshot'));
+  assert.ok('tags' in built.notes_create.inputSchema.shape);
+  assert.ok('tags' in built.notes_append.inputSchema.shape);
+  assert.ok('locator' in built);
   const noClick: Profile = {...assistant, tools: assistant.tools.filter(t => t !== 'click')};
   assert.ok(!('click' in buildAgentTools(noClick, fakeCtx().ctx)));
 });
@@ -88,8 +93,50 @@ test('buildAgentTools: done возвращает итог, click идёт в т�
   assert.equal(await tools.done.execute({outcome: 'success', summary: 'Готово'}, {toolCallId: '1', messages: []}), 'Готово');
   assert.equal(await tools.click.execute({ref: 'a1'}, {toolCallId: '2', messages: []}), 'click ok');
   assert.deepEqual(calls, ['click {"ref":"a1"}']);
+  assert.match(await tools.notes_create.execute({title: 'Новая', body: 'x'}, {toolCallId: '3a', messages: []}), /USER_DECLINED/);
   assert.match(await tools.notes_append.execute({id: 'n', text: 'x'}, {toolCallId: '3', messages: []}), /USER_DECLINED/);
   assert.equal(await tools.ask_user.execute({question: '?', kind: 'input'}, {toolCallId: '4', messages: []}), 'ответ пользователя');
+});
+
+test('buildAgentTools: verification debt запрещает ложный success до свежего snapshot', async () => {
+  const page = {
+    snapshot: async () => ({ok: true, text: 'свежий снимок'}), find: async () => ({ok: true, text: ''}), read: async () => ({ok: true, text: ''}),
+    click: async () => ({ok: true, text: 'клик', receipt: {action: 'click', target: 'a1', dispatched: true,
+      effect: {verdict: 'none', signals: []}, postcondition: {verdict: 'not_checked'}, page: {revision: 1, url: 'https://x', changed: 'none'}}}),
+  };
+  const {ctx} = fakeCtx();
+  ctx.tabs.current = async () => page as any;
+  const tools = buildAgentTools(assistant, ctx) as any;
+  const o = {toolCallId: 'x', messages: []};
+  await tools.click.execute({ref: 'a1'}, o);
+  assert.match(await tools.done.execute({outcome: 'success', summary: 'Готово'}, o), /VERIFICATION_REQUIRED/);
+  await tools.snapshot.execute({}, o);
+  assert.equal(await tools.done.execute({outcome: 'success', summary: 'Готово'}, o), 'Готово');
+});
+
+test('buildAgentTools: второй mutation из одного batch отменяется после первого', async () => {
+  const page = {snapshot: async () => ({ok: true, text: ''}), find: async () => ({ok: true, text: ''}), read: async () => ({ok: true, text: ''}),
+    click: async ({ref}: {ref: string}) => ({ok: true, text: `click ${ref}`, receipt: {action: 'click', target: ref, dispatched: true,
+      effect: {verdict: 'changed', signals: ['visible_diff']}, postcondition: {verdict: 'not_checked'}, page: {revision: 1, url: 'https://x', changed: 'diff'}}})};
+  const {ctx} = fakeCtx();
+  ctx.tabs.current = async () => page as any;
+  const tools = buildAgentTools(assistant, ctx) as any;
+  const o = {toolCallId: 'x', messages: []};
+  const first = tools.click.execute({ref: 'a1'}, o);
+  const second = tools.click.execute({ref: 'a2'}, o);
+  assert.equal(await first, 'click a1');
+  assert.match(await second, /PAGE_CHANGED/);
+});
+
+test('buildAgentTools: consequential действие требует отдельной проверки даже при видимом diff', async () => {
+  const page = {snapshot: async () => ({ok: true, text: 'проверено'}), find: async () => ({ok: true, text: ''}), read: async () => ({ok: true, text: ''}),
+    click: async () => ({ok: true, text: 'отправлено', receipt: {action: 'click', target: 'a1', dispatched: true, consequential: true,
+      effect: {verdict: 'changed', signals: ['visible_diff']}, postcondition: {verdict: 'not_checked'}, page: {revision: 2, url: 'https://x', changed: 'diff'}}})};
+  const {ctx} = fakeCtx(); ctx.tabs.current = async () => page as any;
+  const tools = buildAgentTools(assistant, ctx) as any;
+  const o = {toolCallId: 'x', messages: []};
+  await tools.click.execute({ref: 'a1'}, o);
+  assert.match(await tools.done.execute({outcome: 'success', summary: 'Удалено'}, o), /VERIFICATION_REQUIRED/);
 });
 
 test('agentSystemPrompt: правила работы, шаги пользователя, маркеры, роль', () => {

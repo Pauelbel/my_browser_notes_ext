@@ -777,7 +777,17 @@ function buildOutline(capture2) {
     const children = buildFrame(frame, 0, ctx);
     if (children.length) roots.push({ kind: "element", role: "Iframe", name: frame.url, states: [], children, interactive: false, frameId: frame.frameId, sessionId: frame.sessionId, loaderId: frame.loaderId });
   }
+  annotateRecordContexts(roots);
   return { roots, notices: ctx.notices };
+}
+var RECORD_ROLES = /* @__PURE__ */ new Set(["row", "listitem", "article", "treeitem"]);
+var contextText = (node) => cleanText([node.name, node.value ?? "", ...node.children.map(contextText)].join(" ")).slice(0, 240);
+function annotateRecordContexts(nodes, inherited = "") {
+  for (const node of nodes) {
+    const context = RECORD_ROLES.has(node.role) ? contextText(node) : inherited;
+    if (node.interactive && context) node.recordContext = context;
+    annotateRecordContexts(node.children, context);
+  }
 }
 
 // src/page/render.ts
@@ -976,12 +986,21 @@ var PROBE_SOURCE = `(() => {
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, {once: true});
   const fold = s => s.toLowerCase().replace(/\u0451/g, '\u0435');
   const highlights = new Map();
+  const highlightTimers = new Map();
+  const armExpiry = owner => {
+    const key = owner || '*';
+    clearTimeout(highlightTimers.get(key));
+    highlightTimers.set(key, setTimeout(() => globalThis.__assistant && globalThis.__assistant.clearHighlights(owner || undefined), 10 * 60 * 1000));
+  };
   let layer = null;
   const ensureLayer = () => {
     if (layer && layer.host.isConnected) return layer;
     const host = document.createElement('div');
     host.setAttribute('${OVERLAY_ATTR2}', '');
-    for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
+    // A zero-sized host with fixed children cannot cover the page even in browser hit-testing implementations
+    // that handle pointer-events on shadow hosts inconsistently.
+    for (const [k, v] of [['position', 'fixed'], ['left', '0'], ['top', '0'], ['width', '0'], ['height', '0'], ['overflow', 'visible'],
+      ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
     const root = host.attachShadow({mode: 'closed'});
     document.documentElement.append(host);
     layer = {host, root, boxes: []};
@@ -997,7 +1016,7 @@ var PROBE_SOURCE = `(() => {
   };
   globalThis.__assistant = {
     ${CHECKS_SOURCE}
-    highlightText(query, name) {
+    highlightText(query, name, owner) {
       const words = fold(query).split(/\\s+/).filter(Boolean); if (!words.length) return 0;
       // The visible text as one string with each character's node and offset: sites split a phrase over elements
       // (YouTube writes \xAB29\xBB and \xAB\u043A\u043E\u043C\u043C\u0435\u043D\u0442\u0430\u0440\u0438\u0435\u0432\xBB in two spans), so a match may span nodes.
@@ -1034,14 +1053,16 @@ var PROBE_SOURCE = `(() => {
       for (const r of ranges) h.add(r);
       highlights.set(name, h);
       CSS.highlights.set(name, h);
+      armExpiry(owner);
       return ranges.length;
     },
-    highlightElement(el, color) {
+    highlightElement(el, color, owner) {
       const l = ensureLayer();
       const box = document.createElement('div');
       l.root.append(box);
-      l.boxes.push({el, box, color});
+      l.boxes.push({el, box, color, owner: owner || ''});
       l.place();
+      armExpiry(owner);
       return 1;
     },
     border(on, color) {
@@ -1054,10 +1075,15 @@ var PROBE_SOURCE = `(() => {
         ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
       document.documentElement.append(host);
     },
-    clearHighlights() {
-      for (const name of highlights.keys()) CSS.highlights.delete(name);
-      highlights.clear();
-      if (layer) { layer.host.remove(); layer = null; }
+    clearHighlights(owner) {
+      const prefix = owner ? 'assistant-' + owner + '-' : '';
+      for (const name of [...highlights.keys()]) if (!owner || name.startsWith(prefix) || /^assistant-(yellow|green|blue|red|orange)$/.test(name)) { CSS.highlights.delete(name); highlights.delete(name); }
+      if (layer && owner) {
+        for (const item of layer.boxes.filter(x => x.owner === owner || !x.owner)) item.box.remove();
+        layer.boxes = layer.boxes.filter(x => x.owner !== owner && x.owner);
+        if (!layer.boxes.length) { layer.host.remove(); layer = null; }
+      } else if (layer) { layer.host.remove(); layer = null; }
+      const key = owner || '*'; clearTimeout(highlightTimers.get(key)); highlightTimers.delete(key);
     },
     state,
     readyState: () => document.readyState,
@@ -1234,6 +1260,28 @@ var Observer = class {
     }
     return { header: header(raw), body, notices };
   }
+  /** Resolve an exact semantic target without silently picking the first similarly named control. */
+  async semanticRef(q) {
+    const { roots } = await this.observe();
+    let scope = roots;
+    if (q.within) {
+      const record = this.refs.get(q.within);
+      const container = all(roots).find((n) => n.backendNodeId === record.backendNodeId && n.loaderId === record.loaderId);
+      if (!container) throw new PageError("REF_STALE", `\u041E\u0431\u043B\u0430\u0441\u0442\u044C ${q.within} \u0443\u0441\u0442\u0430\u0440\u0435\u043B\u0430: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot.`);
+      scope = [container];
+    }
+    const role = fold(q.role.trim()), name = fold(q.name.trim());
+    const matches = all(scope).filter((n) => n.interactive && n.backendNodeId !== void 0 && fold(n.role) === role && fold(n.name) === name);
+    if (!matches.length) throw new PageError("NOT_FOUND", `\u0422\u043E\u0447\u043D\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${q.role} \xAB${q.name}\xBB \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot \u0438\u043B\u0438 \u0443\u0442\u043E\u0447\u043D\u0438\u0442\u0435 within.`);
+    if (q.nth === void 0 && matches.length !== 1) {
+      throw new PageError("AMBIGUOUS_TARGET", `\u041D\u0430\u0439\u0434\u0435\u043D\u043E ${matches.length} \u0442\u043E\u0447\u043D\u044B\u0445 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u0432 ${q.role} \xAB${q.name}\xBB. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 within \u0438\u043B\u0438 nth; \u043F\u0435\u0440\u0432\u044B\u0439 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438 \u043D\u0435 \u0432\u044B\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044F.`);
+    }
+    const index = q.nth === void 0 ? 0 : q.nth - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= matches.length) {
+      throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${q.role} \xAB${q.name}\xBB nth \u0434\u043E\u043B\u0436\u0435\u043D \u0431\u044B\u0442\u044C \u043E\u0442 1 \u0434\u043E ${matches.length}.`);
+    }
+    return this.refs.assign(matches[index]);
+  }
 };
 var inline = (nodes) => nodes.map((n) => n.kind === "text" ? n.name : n.role === "link" ? link(n) : n.name || inline(n.children)).join(" ").replace(/\s+/g, " ").trim();
 var link = (n) => `[${n.name || inline(n.children)}](${n.href ?? ""})`;
@@ -1277,13 +1325,15 @@ var RefRegistry = class {
         loaderId: node.loaderId,
         role: node.role,
         name: node.name,
-        proxy: node.proxy
+        proxy: node.proxy,
+        recordContext: node.recordContext
       };
       this.#byKey.set(key, record);
       this.#byRef.set(record.ref, record);
     } else {
       record.role = node.role;
       record.name = node.name;
+      record.recordContext = node.recordContext;
     }
     node.ref = record.ref;
     return record.ref;
@@ -1340,6 +1390,17 @@ async function resolveTarget(session, refs, ref, probes) {
     const role = nodes[0]?.role?.value ?? "", name = cleanText(String(nodes[0]?.name?.value ?? ""));
     if (role !== record.role || name !== record.name) {
       throw new PageError("REF_STALE", staleText(ref, `\u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F (\u0431\u044B\u043B ${record.role} "${record.name}", \u0441\u0442\u0430\u043B ${role} "${name}")`));
+    }
+  }
+  if (record.recordContext) {
+    const current = await callOn(session, frame, objectId, `function () {
+      const start = this.nodeType === 1 ? this : this.parentElement;
+      const row = start && start.closest('[role="row"], [role="listitem"], [role="article"], [role="treeitem"], tr, li, article');
+      return row ? (row.innerText || row.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 240) : '';
+    }`).catch(() => "");
+    const expected = cleanText(record.recordContext).slice(0, 240);
+    if (current && expected && cleanText(current) !== expected) {
+      throw new PageError("REF_STALE", staleText(ref, "\u0442\u0435\u043F\u0435\u0440\u044C \u043D\u0430\u0445\u043E\u0434\u0438\u0442\u0441\u044F \u0432 \u0434\u0440\u0443\u0433\u043E\u0439 \u0437\u0430\u043F\u0438\u0441\u0438 \u0441\u043F\u0438\u0441\u043A\u0430 (\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u0435\u0440\u0435\u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u043B\u0430 DOM-\u0443\u0437\u0435\u043B)"));
     }
   }
   return { record, frame, objectId };
@@ -1812,15 +1873,19 @@ var COLORS = {
   red: { fill: "rgba(255, 80, 80, 0.45)", line: "#e53935" },
   orange: { fill: "rgba(255, 165, 0, 0.5)", line: "#f08c00" }
 };
-var STYLE_TEXT = Object.entries(COLORS).map(([name, c]) => `::highlight(assistant-${name}) { background-color: ${c.fill}; color: inherit; }`).join("\n");
 var Highlighter = class {
   #session;
   #probes;
   /** Frames (by document) that already have the style sheet. */
   #styled = /* @__PURE__ */ new Set();
-  constructor(session, probes) {
+  #owner;
+  constructor(session, probes, owner = "") {
     this.#session = session;
     this.#probes = probes;
+    this.#owner = owner.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  }
+  #name(color) {
+    return `assistant-${this.#owner ? `${this.#owner}-` : ""}${color}`;
   }
   async #style(frameId) {
     const frame = this.#session.frames.get(frameId);
@@ -1829,7 +1894,8 @@ var Highlighter = class {
     if (this.#styled.has(key)) return;
     await this.#session.cdp.send("CSS.enable", {}, frame.sessionId);
     const { styleSheetId } = await this.#session.cdp.send("CSS.createStyleSheet", { frameId }, frame.sessionId);
-    await this.#session.cdp.send("CSS.setStyleSheetText", { styleSheetId, text: STYLE_TEXT }, frame.sessionId);
+    const styles = Object.entries(COLORS).map(([name, c]) => `::highlight(${this.#name(name)}) { background-color: ${c.fill}; color: inherit; }`).join("\n");
+    await this.#session.cdp.send("CSS.setStyleSheetText", { styleSheetId, text: styles }, frame.sessionId);
     this.#styled.add(key);
   }
   /** Highlights every visible occurrence of the text in every frame; returns how many. */
@@ -1838,18 +1904,29 @@ var Highlighter = class {
     for (const frame of this.#session.frames.list()) {
       try {
         await this.#style(frame.frameId);
-        count += await probeEval(this.#session, frame.frameId, this.#probes, `__assistant.highlightText(${JSON.stringify(text)}, ${JSON.stringify(`assistant-${color}`)})`);
+        count += await probeEval(
+          this.#session,
+          frame.frameId,
+          this.#probes,
+          `__assistant.highlightText(${JSON.stringify(text)}, ${JSON.stringify(this.#name(color))}, ${JSON.stringify(this.#owner)})`
+        );
       } catch {
       }
     }
     return count;
   }
   async element(target, color) {
-    await callOn(this.#session, target.frame, target.objectId, `function (color) { return __assistant.highlightElement(this.nodeType === 1 ? this : this.parentElement, color); }`, [{ value: COLORS[color].line }]);
+    await callOn(
+      this.#session,
+      target.frame,
+      target.objectId,
+      `function (color, owner) { return __assistant.highlightElement(this.nodeType === 1 ? this : this.parentElement, color, owner); }`,
+      [{ value: COLORS[color].line }, { value: this.#owner }]
+    );
   }
   async clear() {
     for (const frame of this.#session.frames.list()) {
-      await probeEval(this.#session, frame.frameId, this.#probes, "__assistant.clearHighlights()").catch(() => {
+      await probeEval(this.#session, frame.frameId, this.#probes, `__assistant.clearHighlights(${JSON.stringify(this.#owner || void 0)})`).catch(() => {
       });
     }
   }
@@ -1858,6 +1935,222 @@ function checkColor(color) {
   const c = color ?? "yellow";
   if (!(c in COLORS)) throw new PageError("NOT_FOUND", `\u0426\u0432\u0435\u0442 ${color} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(COLORS).join(", ")}.`);
   return c;
+}
+
+// src/page/locator.ts
+function inspectLocator() {
+  const element = this;
+  const root = element.getRootNode();
+  const tag = element.localName.toLowerCase();
+  const useful = ["id", "data-testid", "data-test", "data-qa", "aria-label", "name", "role", "class", "title", "type"];
+  const attributes = {};
+  for (const name of useful) {
+    const value = element.getAttribute(name);
+    if (value) attributes[name] = value;
+  }
+  const text = (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const cssValue = (value) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\a ")}"`;
+  const cssId = (value) => value.replace(/(^-?\d)|[^a-zA-Z0-9_-]/g, (char) => `\\${char.codePointAt(0).toString(16)} `);
+  const selectsOnly = (selector, node) => {
+    try {
+      const found = root.querySelectorAll(selector);
+      return found.length === 1 && found[0] === node;
+    } catch {
+      return false;
+    }
+  };
+  const uniqueCss = (selector) => {
+    return selectsOnly(selector, element);
+  };
+  const looksGenerated = (value) => value.length > 72 || /(?:^|[-_])(?:\d{5,}|[a-f0-9]{12,})(?:$|[-_])/i.test(value) || /^(?:ember|react|vue|radix|headlessui|:r)[-_:.]?\d/i.test(value);
+  const stableId = attributes.id && !looksGenerated(attributes.id) ? `#${cssId(attributes.id)}` : "";
+  const cssCandidates = [
+    ...["data-testid", "data-test", "data-qa"].filter((name) => attributes[name]).map((name) => `${tag}[${name}=${cssValue(attributes[name])}]`),
+    stableId,
+    ...["aria-label", "name", "title", "type"].filter((name) => attributes[name]).map((name) => `${tag}[${name}=${cssValue(attributes[name])}]`),
+    attributes.id && !stableId ? `#${cssId(attributes.id)}` : ""
+  ].filter(Boolean);
+  let css = cssCandidates.find(uniqueCss) ?? "";
+  if (!css) {
+    const leaves = ["data-testid", "data-test", "data-qa", "aria-label", "name", "title", "type"].filter((name) => attributes[name]).map((name) => `${tag}[${name}=${cssValue(attributes[name])}]`);
+    let ancestor = element.parentElement;
+    while (ancestor && !css) {
+      const currentAncestor = ancestor;
+      const ancestorTag = ancestor.localName.toLowerCase();
+      const anchors = [];
+      const ancestorId = ancestor.getAttribute("id");
+      if (ancestorId) anchors.push(`#${cssId(ancestorId)}`);
+      for (const name of ["data-testid", "data-test", "data-qa", "aria-label", "name"]) {
+        const value = ancestor.getAttribute(name);
+        if (value) anchors.push(`${ancestorTag}[${name}=${cssValue(value)}]`);
+      }
+      anchors.push(ancestorTag);
+      for (const anchor of anchors.filter((candidate) => selectsOnly(candidate, currentAncestor))) {
+        css = leaves.map((leaf) => `${anchor} ${leaf}`).find(uniqueCss) ?? "";
+        if (css) break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+  }
+  if (!css) {
+    const parts = [];
+    let current = element;
+    while (current) {
+      const currentTag = current.localName.toLowerCase();
+      const currentName = current.localName;
+      const parent = current.parentElement;
+      if (!parent) {
+        parts.unshift(currentTag);
+        break;
+      }
+      const same = Array.from(parent.children).filter((child) => child.localName === currentName);
+      parts.unshift(`${currentTag}:nth-of-type(${same.indexOf(current) + 1})`);
+      const trial = parts.join(" > ");
+      if (uniqueCss(trial)) break;
+      current = parent;
+    }
+    css = parts.join(" > ");
+  }
+  let xpath = null;
+  if (root.nodeType === 9) {
+    const doc = root;
+    const literal = (value) => {
+      if (!value.includes("'")) return `'${value}'`;
+      if (!value.includes('"')) return `"${value}"`;
+      return `concat(${value.split("'").map((part) => `'${part}'`).join(`, "'", `)})`;
+    };
+    const uniqueXpath = (candidate) => {
+      try {
+        const result = doc.evaluate(candidate, doc, null, doc.defaultView.XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        return result.snapshotLength === 1 && result.snapshotItem(0) === element;
+      } catch {
+        return false;
+      }
+    };
+    const xpathCandidates = [];
+    for (const name of ["data-testid", "data-test", "data-qa"]) if (attributes[name]) xpathCandidates.push(`//${tag}[@${name}=${literal(attributes[name])}]`);
+    if (attributes.id && !looksGenerated(attributes.id)) xpathCandidates.push(`//*[@id=${literal(attributes.id)}]`);
+    for (const name of ["aria-label", "name", "title", "type"]) if (attributes[name]) xpathCandidates.push(`//${tag}[@${name}=${literal(attributes[name])}]`);
+    let ancestor = element.parentElement;
+    const leaves = ["data-testid", "data-test", "data-qa", "aria-label", "name", "title", "type"].filter((name) => attributes[name]).map((name) => `${tag}[@${name}=${literal(attributes[name])}]`);
+    while (ancestor) {
+      const ancestorTag = ancestor.localName.toLowerCase();
+      const anchors = [];
+      const ancestorId = ancestor.getAttribute("id");
+      if (ancestorId) anchors.push(`//*[@id=${literal(ancestorId)}]`);
+      for (const name of ["data-testid", "data-test", "data-qa", "aria-label", "name"]) {
+        const value = ancestor.getAttribute(name);
+        if (value) anchors.push(`//${ancestorTag}[@${name}=${literal(value)}]`);
+      }
+      anchors.push(`//${ancestorTag}`);
+      for (const anchor of anchors) {
+        for (const leaf of leaves) xpathCandidates.push(`${anchor}//${leaf}`);
+      }
+      ancestor = ancestor.parentElement;
+    }
+    if (text && text.length <= 160) xpathCandidates.push(`//${tag}[normalize-space(.)=${literal(text)}]`);
+    if (attributes.id && looksGenerated(attributes.id)) xpathCandidates.push(`//*[@id=${literal(attributes.id)}]`);
+    xpath = xpathCandidates.find(uniqueXpath) ?? null;
+    if (!xpath) {
+      const parts = [];
+      let current = element;
+      while (current) {
+        const currentName = current.localName;
+        const parent = current.parentElement;
+        const siblings = parent ? Array.from(parent.children).filter((child) => child.localName === currentName) : [current];
+        parts.unshift(`${current.localName.toLowerCase()}[${siblings.indexOf(current) + 1}]`);
+        current = parent;
+      }
+      const absolute = `/${parts.join("/")}`;
+      if (uniqueXpath(absolute)) xpath = absolute;
+    }
+  }
+  const candidates = [];
+  if (attributes.id) {
+    const query = `#${cssId(attributes.id)}`;
+    if (uniqueCss(query)) candidates.push({ kind: "id", value: attributes.id, query, stability: looksGenerated(attributes.id) ? "low" : "high" });
+  }
+  for (const name of ["data-testid", "data-test", "data-qa"]) if (attributes[name]) {
+    const query = `${tag}[${name}=${cssValue(attributes[name])}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "testid", value: query, query, stability: "high" });
+  }
+  if (attributes["aria-label"]) {
+    const query = `${tag}[aria-label=${cssValue(attributes["aria-label"])}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "aria", value: query, query, stability: "medium" });
+  }
+  if (attributes.name) {
+    const query = `${tag}[name=${cssValue(attributes.name)}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "name", value: query, query, stability: "medium" });
+  }
+  if (attributes.role) {
+    const query = `${tag}[role=${cssValue(attributes.role)}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "role", value: query, query, stability: "medium" });
+  }
+  for (const name of Array.from(element.classList)) {
+    const query = `.${cssId(name)}`;
+    if (uniqueCss(query)) {
+      candidates.push({ kind: "class", value: query, query, stability: looksGenerated(name) ? "low" : "medium" });
+      break;
+    }
+  }
+  if (uniqueCss(tag)) candidates.push({ kind: "tag", value: tag, query: tag, stability: "medium" });
+  if (css) candidates.push({ kind: "css", value: css, query: css, stability: css.includes(":nth-of-type") ? "low" : "high" });
+  if (xpath && root.nodeType === 9) candidates.push({
+    kind: "xpath",
+    value: xpath,
+    query: xpath,
+    stability: xpath.startsWith("/html[") || /^\/(?:[^/]+\[\d+\]\/)+/.test(xpath) ? "low" : "high"
+  });
+  return { tag, attributes, text, css, xpath, scope: root.nodeType === 9 ? "document" : "shadow-root", candidates };
+}
+var locatorFunction = `function () { return (${inspectLocator.toString()}).call(this); }`;
+async function verifyCdpLocator(send, query, backendNodeId, sessionId) {
+  let searchId = "";
+  try {
+    await send("DOM.getDocument", { depth: 0, pierce: true }, sessionId);
+    const found = await send(
+      "DOM.performSearch",
+      { query, includeUserAgentShadowDOM: true },
+      sessionId
+    );
+    searchId = found.searchId;
+    if (found.resultCount !== 1) return false;
+    const result = await send("DOM.getSearchResults", { searchId, fromIndex: 0, toIndex: 1 }, sessionId);
+    if (result.nodeIds.length !== 1) return false;
+    const described = await send("DOM.describeNode", { nodeId: result.nodeIds[0] }, sessionId);
+    return described.node.backendNodeId === backendNodeId;
+  } catch {
+    return false;
+  } finally {
+    if (searchId) await send("DOM.discardSearchResults", { searchId }, sessionId).catch(() => {
+    });
+  }
+}
+
+// src/agent/locator-intent.ts
+var START = "[[[assistant-verified-locator-answer:v1]]]";
+var END = "[[[end-assistant-verified-locator-answer:v1]]]";
+function wrapLocatorAnswer(answer) {
+  return `${START}
+${answer.trim()}
+${END}`;
+}
+var locatorKindLabel = (kind) => ({
+  xpath: "XPath",
+  css: "CSS",
+  id: "ID",
+  testid: "Test ID",
+  aria: "ARIA",
+  name: "Name",
+  class: "Class",
+  tag: "Tag",
+  role: "Role"
+})[kind];
+
+// src/page/receipt.ts
+function renderReceipt(receipt) {
+  const post = receipt.postcondition.details ? `:${receipt.postcondition.details.replace(/\s+/g, " ").slice(0, 160)}` : "";
+  return `[action-receipt dispatched=${receipt.dispatched} consequential=${Boolean(receipt.consequential)} effect=${receipt.effect.verdict} postcondition=${receipt.postcondition.verdict}${post} page.rev=${receipt.page.revision} changed=${receipt.page.changed}]`;
 }
 
 // src/page/tools.ts
@@ -1896,7 +2189,11 @@ function pageText(head, body, notices) {
 function errorResult(error) {
   if (error instanceof PageError) {
     const delivered = error.delivered === true ? " \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430 \u0431\u044B\u043B\u043E \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : error.delivered === "unknown" ? " \u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E, \u0434\u043E\u0448\u043B\u043E \u043B\u0438 \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : "";
-    return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error.code}: ${neutralize(error.message)}${delivered}` };
+    return {
+      ok: false,
+      text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error.code}: ${neutralize(error.message)}${delivered}`,
+      error: { code: error.code, retryable: !["USER_DECLINED", "SITE_BLOCKED", "PAGE_NOT_SUPPORTED", "SESSION_DISPOSED"].includes(error.code), dispatched: error.delivered }
+    };
   }
   return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 INTERNAL: ${neutralize(error instanceof Error ? error.message : String(error))}` };
 }
@@ -1911,6 +2208,9 @@ var PageTools = class {
   #highlights = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog;
+  #revision = 0;
+  #disposed = false;
+  #offs = [];
   gate;
   constructor(session, options) {
     this.session = session;
@@ -1918,24 +2218,31 @@ var PageTools = class {
     this.gate = options.gate;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
-    this.highlighter = new Highlighter(session, this.observer.probes);
+    this.highlighter = new Highlighter(session, this.observer.probes, options.ownerId);
     this.diagnostics = session.diagnostics;
-    session.cdp.on((method, _params, sessionId) => {
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => {
       if (method === "Page.loadEventFired" && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300);
-    });
-    session.cdp.on((method) => {
+    }));
+    this.#offs.push(session.cdp.on((method) => {
       if (method === "Page.javascriptDialogClosed") this.dialog = void 0;
-    });
-    session.cdp.on((method, params) => {
+    }));
+    this.#offs.push(session.cdp.on((method, params) => {
       if (method === "Page.javascriptDialogOpening") this.dialog = { type: params.type, message: params.message };
-    });
-    session.frames.onChange(() => {
+    }));
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => {
+      if (!sessionId && (method === "Page.frameNavigated" || method === "Page.navigatedWithinDocument" || method === "DOM.documentUpdated")) this.#revision++;
+    }));
+    this.#offs.push(session.frames.onChange(() => {
       for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId);
-    });
+    }));
+  }
+  get revision() {
+    return this.#revision;
   }
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
   async run(fn, allowDuringDialog = false, allowOnBlocked = false) {
     try {
+      if (this.#disposed) throw new PageError("SESSION_DISPOSED", "\u0421\u0435\u0441\u0441\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0443\u0436\u0435 \u0437\u0430\u043A\u0440\u044B\u0442\u0430: \u043E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u0437\u0430\u043D\u043E\u0432\u043E.");
       if (this.gate && !allowOnBlocked) {
         const site = siteOf(this.session.frames.main().url);
         if (site && await this.gate.blocked(site)) throw new PageError("SITE_BLOCKED", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435 ${site}, \u043A\u043E\u0442\u043E\u0440\u044B\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043B: \u0437\u0434\u0435\u0441\u044C \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0434\u0435\u043B\u0430\u0435\u0442. \u0423\u0439\u0434\u0438\u0442\u0435 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (navigate) \u0438\u043B\u0438 \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443.`);
@@ -1944,7 +2251,20 @@ var PageTools = class {
         throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E (handle_dialog), \u0435\u0441\u043B\u0438 \u044D\u0442\u043E\u0442 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0435\u0441\u0442\u044C, \u0438\u043D\u0430\u0447\u0435 \u043F\u043E\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433.`);
       }
       const out = await fn();
-      return { ok: true, text: typeof out === "string" ? pageText("", out, []) : pageText(out.head, out.body, out.notices) };
+      if (typeof out === "string") return { ok: true, text: pageText("", out, []) };
+      if ("receipt" in out) {
+        const receipt = renderReceipt(out.receipt);
+        if (out.error) return {
+          ok: false,
+          text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${out.error.code}: ${neutralize(out.error.message)}
+${receipt}`,
+          receipt: out.receipt,
+          error: { code: out.error.code, retryable: true, dispatched: out.receipt.dispatched }
+        };
+        return { ok: true, text: `${pageText("", out.body, [])}
+${receipt}`, receipt: out.receipt };
+      }
+      return { ok: true, text: pageText(out.head, out.body, out.notices) };
     } catch (error) {
       return errorResult(error);
     }
@@ -1967,6 +2287,50 @@ var PageTools = class {
       return { head: r.header, body: r.body, notices: r.notices };
     });
   }
+  /** A fresh, independently verified locator for the current page revision. */
+  locator(args) {
+    return this.run(async () => ({
+      head: `\u041B\u043E\u043A\u0430\u0442\u043E\u0440 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \xB7 ${this.session.frames.main().url}`,
+      body: await this.#locatorBlock(args.ref, args.kind ?? "best"),
+      notices: []
+    }));
+  }
+  async #locatorBlock(ref, requested) {
+    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    const info = await callOn(this.session, target.frame, target.objectId, locatorFunction);
+    const send = (method, params, sessionId) => this.session.cdp.send(method, params, sessionId);
+    const verified = [];
+    for (const candidate of info.candidates) {
+      if (candidate.kind === "xpath" && info.scope === "shadow-root") continue;
+      if (await verifyCdpLocator(send, candidate.query, target.record.backendNodeId, target.frame.sessionId)) verified.push(candidate);
+    }
+    const rank = ["testid", "id", "css", "xpath", "aria", "role", "name", "class", "tag"];
+    const score = (candidate) => ({ high: 0, medium: 10, low: 20 })[candidate.stability] + rank.indexOf(candidate.kind);
+    verified.sort((a, b) => score(a) - score(b));
+    const exact = requested === "best" ? verified[0] : verified.find((candidate) => candidate.kind === requested);
+    const chosen = exact ?? verified.find((candidate) => candidate.kind !== requested);
+    const scope = info.scope === "shadow-root" ? "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: Shadow DOM; \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u0442\u044C \u0432\u043D\u0443\u0442\u0440\u0438 \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E shadowRoot." : target.frame.parentFrameId ? "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: document \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E iframe." : "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: \u043E\u0441\u043D\u043E\u0432\u043D\u043E\u0439 document.";
+    const stability = { high: "\u0432\u044B\u0441\u043E\u043A\u0430\u044F", medium: "\u0441\u0440\u0435\u0434\u043D\u044F\u044F", low: "\u043D\u0438\u0437\u043A\u0430\u044F" };
+    let answer;
+    if (!chosen) {
+      const label = requested === "best" ? "\u043B\u043E\u043A\u0430\u0442\u043E\u0440" : locatorKindLabel(requested);
+      answer = `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0440\u043E\u0438\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0443\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0439 ${label} \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430. \u041F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0445 \u0430\u043B\u044C\u0442\u0435\u0440\u043D\u0430\u0442\u0438\u0432 \u0442\u043E\u0436\u0435 \u043D\u0435\u0442.`;
+    } else {
+      const label = locatorKindLabel(chosen.kind);
+      const prefix = exact ? "" : `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0440\u043E\u0438\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0443\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0439 ${locatorKindLabel(requested)} \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430.
+
+\u0411\u043B\u0438\u0436\u0430\u0439\u0448\u0438\u0439 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442 \u2014 ${label}:
+`;
+      const language = chosen.kind === "xpath" ? "xpath" : ["css", "testid", "aria", "name", "class", "role"].includes(chosen.kind) ? "css" : "text";
+      answer = `${prefix}${exact ? `${label}:
+` : ""}\`\`\`${language}
+${chosen.value}
+\`\`\`
+
+\u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E: \u0440\u043E\u0432\u043D\u043E 1 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0435 \u0438 \u0442\u043E\u0442 \u0436\u0435 DOM-\u044D\u043B\u0435\u043C\u0435\u043D\u0442. \u0421\u0442\u0430\u0431\u0438\u043B\u044C\u043D\u043E\u0441\u0442\u044C: ${stability[chosen.stability]}. ${scope} page.rev=${this.#revision}.`;
+    }
+    return wrapLocatorAnswer(answer);
+  }
   /** The page around the screen as full lines (text included), for the diff in a receipt. */
   async #describe() {
     const { capture: capture2, roots } = await this.observer.observe();
@@ -1976,7 +2340,7 @@ var PageTools = class {
    * One action on one label: resolve, check, watch, dispatch, settle, describe again. Retries happen only before
    * dispatch; after it, a failure says the event was sent.
    */
-  async #act(verb, ref, needs, dispatch, actions = []) {
+  async #act(verb, ref, needs, dispatch, actions = [], expect, forcedConsequential = false) {
     let target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
     let actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     const verdict = await this.#gate(verb, ref, target, actions);
@@ -1985,13 +2349,19 @@ var PageTools = class {
       target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
       actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     }
+    target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     const before = await this.#describe();
     return this.#dispatchAndReport(
       `${verb} [${ref}] ${target.record.role} "${target.record.name}"`,
       before,
       [target.frame.frameId],
       (dialog) => dispatch(target, actionable, dialog),
-      target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : ""
+      target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : "",
+      verb,
+      ref,
+      expect,
+      forcedConsequential || verdict === "asked"
     );
   }
   /** Classifies the action and asks the gate. 'go' when nothing needed asking. */
@@ -2020,7 +2390,16 @@ var PageTools = class {
     if (answer.decision === "user-did-it") return "user-did-it";
     throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B: ${verb} \xAB${target.record.name}\xBB (${CATEGORY_TEXT[category]}). \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E; \u043D\u0435 \u043F\u044B\u0442\u0430\u0439\u0442\u0435\u0441\u044C \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u044D\u0442\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u043C.`);
   }
-  async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "") {
+  /** Gates an action whose side effects cannot be inferred from an element label. */
+  async #gateCategory(verb, category) {
+    if (!this.gate) return "go";
+    const url = this.session.frames.main().url;
+    const answer = await this.gate.check({ action: verb, ref: "", role: "", name: verb, category, site: siteOf(url), url });
+    if (answer.decision === "allow") return "asked";
+    if (answer.decision === "user-did-it") return "user-did-it";
+    throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B: ${verb} (${CATEGORY_TEXT[category]}). \u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E.`);
+  }
+  async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "", action = what.split(" ", 1)[0], targetRef, expect, consequential = false) {
     const watch = await startWatch(this.session, this.observer.probes, frameIds);
     const dialog = watchDialog(this.session);
     let note = "";
@@ -2040,79 +2419,161 @@ var PageTools = class {
       effect = await this.#effectText(evidence, before);
     } catch (error) {
       if (!(error instanceof PageError && error.code === "DIALOG_OPEN") || !this.dialog) throw error;
-      effect = `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+      effect = {
+        text: `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`,
+        verdict: "changed",
+        signals: ["dialog"],
+        changed: "diff"
+      };
     }
-    return `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${effect}`;
+    if (effect.verdict !== "none") this.#revision++;
+    const postcondition = await this.#checkExpectation(expect, targetRef);
+    const receipt = {
+      action,
+      target: targetRef,
+      dispatched: true,
+      consequential,
+      effect: { verdict: effect.verdict, signals: effect.signals },
+      postcondition,
+      page: { revision: this.#revision, url: this.session.frames.main().url, changed: effect.changed }
+    };
+    const body = `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${effect.text}`;
+    return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details ?? "\u0443\u0441\u043B\u043E\u0432\u0438\u0435 \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E"}. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 \u043D\u043E\u0432\u044B\u0439 snapshot; \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0439\u0442\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0432\u0441\u043B\u0435\u043F\u0443\u044E.` } } : { body, receipt };
   }
   async #effectText(e, before) {
     const counts = `\u043C\u0443\u0442\u0430\u0446\u0438\u0439 ${e.mutations}, \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 ${e.requests}`;
     if (e.effect === "dialog") {
       this.dialog = e.dialog;
-      return `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${e.dialog.type}: \xAB${e.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+      return { text: `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${e.dialog.type}: \xAB${e.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`, verdict: "changed", signals: ["dialog"], changed: "diff" };
     }
-    if (e.effect === "new_tab") return `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u043E\u0432\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${e.url ?? ""}`.trim();
+    if (e.effect === "new_tab") return { text: `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u043E\u0432\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${e.url ?? ""}`.trim(), verdict: "changed", signals: ["new_tab"], changed: "full" };
     if (e.effect === "navigated") {
       const o = await this.observer.snapshot({ budget: this.budget });
-      return `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.url ?? o.capture.url}
+      return {
+        text: `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.url ?? o.capture.url}
 \u043D\u043E\u0432\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430: ${o.header}
-\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`;
+\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`,
+        verdict: "changed",
+        signals: ["navigation"],
+        changed: "full"
+      };
     }
     const diff = renderDiff(diffLines(before, await this.#describe()));
     let head = e.effect === "changed" ? `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${counts})` : e.effect === "requests" ? `\u0443\u0448\u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${e.requests}), \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C` : "\u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0440\u0435\u0430\u043A\u0446\u0438\u0438 \u043D\u0435\u0442";
     if (e.sameDocument) head = `\u0430\u0434\u0440\u0435\u0441 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F \u043D\u0430 ${e.sameDocument} (\u0431\u0435\u0437 \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438) \xB7 ${head}`;
     if (e.notCommitted) head = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.notCommitted} \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D, \u043D\u043E \u043D\u0435 \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u0451\u043B (\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0444\u0430\u0439\u043B\u0430, \u043F\u0443\u0441\u0442\u043E\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438\u043B\u0438 \u043E\u0442\u043C\u0435\u043D\u0430) \xB7 ${head}`;
-    return diff ? `${head}
+    const signals = [e.sameDocument ? "same_document_navigation" : "", diff ? "visible_diff" : "", e.mutations ? "mutations" : "", e.requests ? "network" : "", e.notCommitted ? "navigation_not_committed" : ""].filter(Boolean);
+    const verdict = e.sameDocument || diff ? "changed" : e.effect === "none" ? "none" : "unattributable";
+    return { text: diff ? `${head}
 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F:
-${diff}` : head;
+${diff}` : head, verdict, signals, changed: diff || e.sameDocument ? "diff" : "none" };
+  }
+  async #checkExpectation(expect, actionRef) {
+    if (!expect || Object.values(expect).every((v) => v === void 0)) return { verdict: "not_checked" };
+    const failed = [];
+    const url = this.session.frames.main().url;
+    if (expect.url !== void 0 && !url.includes(expect.url)) failed.push(`URL \u043D\u0435 \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u0442 \xAB${expect.url}\xBB`);
+    if (expect.text !== void 0 || expect.textGone !== void 0) {
+      const { roots } = await this.observer.quick();
+      const page = fold3(flat(roots).map((n) => `${n.name} ${n.value ?? ""}`).join(" "));
+      if (expect.text !== void 0 && !page.includes(fold3(expect.text))) failed.push(`\u0442\u0435\u043A\u0441\u0442 \xAB${expect.text}\xBB \u043D\u0435 \u043F\u043E\u044F\u0432\u0438\u043B\u0441\u044F`);
+      if (expect.textGone !== void 0 && page.includes(fold3(expect.textGone))) failed.push(`\u0442\u0435\u043A\u0441\u0442 \xAB${expect.textGone}\xBB \u043D\u0435 \u0438\u0441\u0447\u0435\u0437`);
+    }
+    const ref = expect.ref ?? actionRef;
+    if (expect.gone !== void 0 || expect.value !== void 0 || expect.checked !== void 0) {
+      if (!ref) failed.push("\u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \u043D\u0435 \u0443\u043A\u0430\u0437\u0430\u043D ref");
+      else {
+        let target = null;
+        try {
+          target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+        } catch (error) {
+          if (!(expect.gone === true && error instanceof PageError && error.code === "REF_STALE")) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D`);
+        }
+        if (expect.gone === true && target) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043D\u0435 \u0438\u0441\u0447\u0435\u0437`);
+        if (expect.gone === false && !target) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442`);
+        if (target && expect.value !== void 0) {
+          const value = await callOn(
+            this.session,
+            target.frame,
+            target.objectId,
+            'function () { const c = this.control || this; return typeof c.value === "string" ? c.value : (c.innerText || ""); }'
+          );
+          if (value.replace(/\s+/g, " ").trim() !== expect.value.replace(/\s+/g, " ").trim()) failed.push(`\u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B\u043E`);
+        }
+        if (target && expect.checked !== void 0 && await isChecked(this.session, target) !== expect.checked) failed.push(`\u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 checked \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B\u043E`);
+      }
+    }
+    return failed.length ? { verdict: "unmet", details: failed.join("; ") } : { verdict: "met" };
+  }
+  async #refOf(args) {
+    if (args.ref && args.target) throw new PageError("AMBIGUOUS_TARGET", "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u043B\u0438\u0431\u043E ref, \u043B\u0438\u0431\u043E semantic target, \u043D\u043E \u043D\u0435 \u043E\u0431\u0430 \u0441\u0440\u0430\u0437\u0443.");
+    if (args.ref) return args.ref;
+    if (args.target) return this.observer.semanticRef(args.target);
+    throw new PageError("NOT_FOUND", "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 ref \u0438\u0437 snapshot \u0438\u043B\u0438 \u0442\u043E\u0447\u043D\u0443\u044E semantic target: role \u0438 name.");
   }
   click(args) {
-    return this.run(() => this.#act("click", args.ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog), ["activate"]));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("click", ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog), ["activate"], args.expect);
+    });
   }
   hover(args) {
-    return this.run(() => this.#act("hover", args.ref, { pointer: true }, async (_t, a) => {
-      await hover(this.session, a.point);
-    }));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("hover", ref, { pointer: true }, async (_t, a) => {
+        await hover(this.session, a.point);
+      }, [], args.expect);
+    });
   }
   type(args) {
-    return this.run(() => this.#act("type", args.ref, { pointer: false, editable: true }, async (t, a, dialog) => {
-      await focusTarget(this.session, t, a.point, dialog);
-      await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
-      if (args.submit) {
-        const r = await pressKey(this.session, "Enter", dialog);
-        if (r.dialog) return r;
-      }
-      return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
-    }, args.submit ? ["type", "enter"] : ["type"]));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("type", ref, { pointer: false, editable: true }, async (t, a, dialog) => {
+        await focusTarget(this.session, t, a.point, dialog);
+        await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
+        if (args.submit) {
+          const r = await pressKey(this.session, "Enter", dialog);
+          if (r.dialog) return r;
+        }
+        return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
+      }, args.submit ? ["type", "enter"] : ["type"], args.expect);
+    });
   }
   set(args) {
     return this.run(async () => {
-      const probe = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      const ref = await this.#refOf(args);
+      const probe = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
       if (await isSelect(this.session, probe)) {
-        return this.#act("set", args.ref, { pointer: false }, async (t) => ({ note: `\u0432\u044B\u0431\u0440\u0430\u043D\u043E \xAB${await selectOption(this.session, t, String(args.value))}\xBB` }));
+        const verdict = await this.#gateCategory("\u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 \u0441\u043F\u0438\u0441\u043A\u0430", "submit");
+        if (verdict === "user-did-it") return `set [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C`;
+        return this.#act("set", ref, { pointer: false }, async (t) => ({ note: `\u0432\u044B\u0431\u0440\u0430\u043D\u043E \xAB${await selectOption(this.session, t, String(args.value))}\xBB` }), [], args.expect, verdict === "asked");
       }
       const want = args.value === true || args.value === "true" || args.value === "on";
-      return this.#act("set", args.ref, { pointer: true }, async (t, a, dialog) => {
+      return this.#act("set", ref, { pointer: true }, async (t, a, dialog) => {
         if (await isChecked(this.session, t) === want) return { note: `\u0443\u0436\u0435 ${want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E"}` };
         const r = await click(this.session, a.point, dialog);
         if (r.dialog) return r;
-        if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${args.ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
+        if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
         return { note: want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E" };
-      }, ["activate"]);
+      }, ["activate"], args.expect);
     });
   }
   press(args) {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError("NOT_FOUND", `\u041A\u043B\u0430\u0432\u0438\u0448\u0430 ${args.key} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(KEYS).join(", ")}.`);
-      if (!args.ref && (args.key === "Enter" || args.key === "Space")) {
+      const chosenRef = args.ref || args.target ? await this.#refOf(args) : void 0;
+      let consequential = false;
+      if (!chosenRef && (args.key === "Enter" || args.key === "Space")) {
         throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${args.key} \u0443\u043A\u0430\u0436\u0438\u0442\u0435 ref \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430: \u0442\u0430\u043A \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442\u0441\u044F.`);
       }
-      if (args.ref) {
-        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      if (chosenRef) {
+        let target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         if (args.key === "Enter" || args.key === "Space") {
           const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
-          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
-          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
-          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+          const verdict = await this.#gate(`press ${args.key}`, chosenRef, target, [control ? "activate" : "enter"]);
+          consequential = verdict === "asked";
+          if (verdict === "user-did-it") return `press ${args.key} [${chosenRef}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
+          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         }
         await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
         await this.session.cdp.send("DOM.focus", { backendNodeId: target.record.backendNodeId }, target.frame.sessionId).catch(() => {
@@ -2122,13 +2583,18 @@ ${diff}` : head;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(
-          `press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`,
+          `press ${args.key} [${chosenRef}] ${target.record.role} "${target.record.name}"`,
           before,
           [target.frame.frameId],
-          (dialog) => pressKey(this.session, args.key, dialog)
+          (dialog) => pressKey(this.session, args.key, dialog),
+          "",
+          `press ${args.key}`,
+          chosenRef,
+          args.expect,
+          consequential
         );
       }
-      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog));
+      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog), "", `press ${args.key}`, void 0, args.expect);
     });
   }
   scroll(args) {
@@ -2153,6 +2619,7 @@ ${diff}` : head;
       const { cdp } = this.session;
       let what;
       let status;
+      let consequential = false;
       const mainId = this.session.frames.main().frameId;
       let done;
       const arrived = new Promise((r) => {
@@ -2176,6 +2643,9 @@ ${diff}` : head;
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
           restored();
         } else if (args.action === "reload") {
+          const verdict = await this.#gateCategory("\u043E\u0431\u043D\u043E\u0432\u0438\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443", "submit");
+          if (verdict === "user-did-it") return "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C";
+          consequential = verdict === "asked";
           what = "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435";
           await cdp.send("Page.reload", {});
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
@@ -2191,8 +2661,19 @@ ${diff}` : head;
         off();
       }
       const o = await this.observer.snapshot({ budget: this.budget });
-      return `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt = {
+        action: "navigate",
+        dispatched: true,
+        consequential,
+        effect: { verdict: "changed", signals: ["navigation"] },
+        postcondition,
+        page: { revision: this.#revision, url: this.session.frames.main().url, changed: "full" }
+      };
+      const body = `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
 \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`;
+      return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details}.` } } : { body, receipt };
     }, false, true);
   }
   wait(args) {
@@ -2395,6 +2876,7 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
     return this.run(async () => {
       if (!this.dialog) throw new PageError("NOT_FOUND", "\u0421\u0435\u0439\u0447\u0430\u0441 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043D\u0435\u0442 \u0434\u0438\u0430\u043B\u043E\u0433\u0430.");
       const was = this.dialog;
+      let consequential = false;
       if (was.type === "prompt" && this.gate) {
         const url = this.session.frames.main().url;
         const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category: "secret", site: siteOf(url), url });
@@ -2414,12 +2896,24 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
           const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category, site: siteOf(url), url });
           if (answer.decision === "user-did-it") return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
           if (answer.decision !== "allow") throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \xAB${was.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u043E\u0442\u043C\u0435\u043D\u043E\u0439 (accept=false).`);
+          consequential = true;
         }
       }
       await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
       this.dialog = void 0;
       await new Promise((r) => setTimeout(r, 300));
-      return `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt = {
+        action: "handle_dialog",
+        dispatched: true,
+        consequential,
+        effect: { verdict: args.accept ? "unattributable" : "changed", signals: ["dialog_closed"] },
+        postcondition,
+        page: { revision: this.#revision, url: this.session.frames.main().url, changed: "diff" }
+      };
+      const body = `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
+      return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u0414\u0438\u0430\u043B\u043E\u0433 \u0437\u0430\u043A\u0440\u044B\u0442, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details}.` } } : { body, receipt };
     }, true, true);
   }
   /** For the e2e harness: runs the checks before an action on a label, without acting. */
@@ -2434,6 +2928,9 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
     }
   }
   dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    for (const off of this.#offs.splice(0)) off();
     this.observer.network.stop();
   }
 };

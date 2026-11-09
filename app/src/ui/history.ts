@@ -102,7 +102,8 @@ export function initHistory(chat: ChatView, client: Client): void {
       const title = await promptDialog('Название чата', target.title, TITLE_LENGTH);
       if (title) await renameConversation(target.id, title);
     } else if (action === 'delete' && await confirmDialog(`Удалить чат «${target.title}» навсегда?`)) {
-      client.post({type: 'delete', conversationId: target.id});
+      const [tab] = await chrome.tabs.query({active: true, currentWindow: true}).catch(() => [] as chrome.tabs.Tab[]);
+      client.post({type: 'delete', conversationId: target.id, tabId: tab?.id ?? null});
       if (target.id === chat.current()) await chat.open(null);
     }
   });

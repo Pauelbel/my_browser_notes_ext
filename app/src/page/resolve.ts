@@ -55,5 +55,16 @@ export async function resolveTarget(session: PageSession, refs: RefRegistry, ref
       throw new PageError('REF_STALE', staleText(ref, `изменился (был ${record.role} "${record.name}", стал ${role} "${name}")`));
     }
   }
+  if (record.recordContext) {
+    const current = await callOn<string>(session, frame, objectId, `function () {
+      const start = this.nodeType === 1 ? this : this.parentElement;
+      const row = start && start.closest('[role="row"], [role="listitem"], [role="article"], [role="treeitem"], tr, li, article');
+      return row ? (row.innerText || row.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 240) : '';
+    }`).catch(() => '');
+    const expected = cleanText(record.recordContext).slice(0, 240);
+    if (current && expected && cleanText(current) !== expected) {
+      throw new PageError('REF_STALE', staleText(ref, 'теперь находится в другой записи списка (страница переиспользовала DOM-узел)'));
+    }
+  }
   return {record, frame, objectId};
 }

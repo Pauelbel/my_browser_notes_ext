@@ -14,7 +14,8 @@ export type PanelToWorker =
   | {type: 'answer'; promptId: string; answer: PanelAnswer}
   | {type: 'mode'; conversationId: string; mode: ChatMode; permission: PermissionMode}
   | {type: 'stop'; conversationId: string}
-  | {type: 'delete'; conversationId: string};
+  /** `tabId` lets deletion also remove a highlight left by older versions that did not remember its tab. */
+  | {type: 'delete'; conversationId: string; tabId?: number | null};
 
 export type WorkerToPanel =
   | {type: 'running'; conversationIds: string[]; prompts?: PendingPrompt[]}
@@ -24,6 +25,7 @@ export type WorkerToPanel =
   | {type: 'finished'; conversationId: string; message: Message}
   | {type: 'busy'; requestId: string; conversationId: string}
   | {type: 'step'; conversationId: string; messageId: string; step: ToolStep}
+  | {type: 'context'; conversationId: string; messageId: string; context: NonNullable<Message['context']>}
   | {type: 'deleted'; conversationId: string}
   | {type: 'prompt'; prompt: PendingPrompt}
   | {type: 'prompt-closed'; promptId: string};

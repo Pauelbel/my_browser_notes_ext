@@ -15,7 +15,7 @@ export type StreamPart =
   | {type: 'text'; delta: string}
   | {type: 'reasoning'; delta: string}
   | {type: 'tool-call'; id: string; name: string; input: unknown}
-  | {type: 'tool-result'; id: string; ok: boolean; summary: string}
+  | {type: 'tool-result'; id: string; ok: boolean; summary: string; /** Full output for strict host-side contracts. */ value?: string}
   /** One model turn finished (tool calls included). */
   | {type: 'step'};
 
@@ -59,13 +59,21 @@ export const ollamaStream: StreamReply = async function* ({settings, system, mes
     if (part.type === 'text-delta') yield {type: 'text', delta: part.text};
     else if (part.type === 'reasoning-delta') yield {type: 'reasoning', delta: part.text};
     else if (part.type === 'tool-call') yield {type: 'tool-call', id: part.toolCallId, name: part.toolName, input: part.input};
-    else if (part.type === 'tool-result') yield {type: 'tool-result', id: part.toolCallId, ok: !String(part.output).startsWith('ошибка'), summary: firstLine(part.output)};
-    else if (part.type === 'tool-error') yield {type: 'tool-result', id: part.toolCallId, ok: false, summary: firstLine(part.error instanceof Error ? part.error.message : part.error)};
+    else if (part.type === 'tool-result') {
+      const value = String(part.output ?? '');
+      yield {type: 'tool-result', id: part.toolCallId, ok: !value.startsWith('ошибка'), summary: summarizeResult(value), value};
+    }
+    else if (part.type === 'tool-error') yield {type: 'tool-result', id: part.toolCallId, ok: false, summary: summarizeResult(part.error instanceof Error ? part.error.message : part.error)};
     else if (part.type === 'finish-step') yield {type: 'step'};
     else if (part.type === 'error') throw part.error;
   }
 };
 
-function firstLine(value: unknown): string {
-  return String(value ?? '').split('\n')[0].slice(0, 160);
+/** Compact persisted action trace: the meaningful line plus the machine receipt, never the page block marker. */
+export function summarizeResult(value: unknown): string {
+  const text = String(value ?? '');
+  const lines = text.split('\n').map(s => s.trim()).filter(s => s && s !== '<<<page-content>>>' && s !== '<<<end-page-content>>>');
+  const head = lines.find(s => !s.startsWith('[action-receipt ')) ?? '';
+  const receipt = lines.find(s => s.startsWith('[action-receipt ')) ?? '';
+  return [head.slice(0, 220), receipt.slice(0, 260)].filter(Boolean).join(' · ').slice(0, 480);
 }

@@ -1,7 +1,7 @@
 // Settings sections of the assistant: the Ollama connection and the profile editor.
 // They live in the notes UI's settings dialog and refresh every time it opens.
 import type {Profile, ToolName} from '../store/types.ts';
-import {getSettings, saveSettings, setSiteRule} from '../store/settings.ts';
+import {getSettings, saveSettings, setSiteRule, normalizeRuleSite} from '../store/settings.ts';
 import type {SiteRule} from '../store/types.ts';
 import {checkOllama} from '../llm/ollama.ts';
 import {deleteProfile, listProfiles, putProfile} from '../store/assistant-db.ts';
@@ -150,8 +150,9 @@ export function initSettings(): void {
   border.addEventListener('change', () => { void saveSettings({border: border.checked}); });
   $('addSiteRule').addEventListener('click', async () => {
     const input = $<HTMLInputElement>('siteRuleSite');
-    const site = input.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
-    if (!site) return;
+    const site = normalizeRuleSite(input.value);
+    if (!site) { input.setCustomValidity('Укажите домен без порта и пути, например example.com'); input.reportValidity(); return; }
+    input.setCustomValidity('');
     await setSiteRule(site, $<HTMLSelectElement>('siteRuleValue').value as SiteRule);
     input.value = '';
     await renderAgent();

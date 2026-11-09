@@ -11,5 +11,7 @@
   <button type="submit">Сохранить</button>
 </form>
 <p><a href="basic.html">Обычная ссылка</a></p>
+<label>Тариф <select id="plan"><option>Базовый</option><option>Платный</option></select></label>
+<script>document.getElementById('plan').onchange = () => document.getElementById('status').textContent = 'Тариф изменён';</script>
 <script>for (const b of document.querySelectorAll('body > button')) b.onclick = () => document.getElementById('status').textContent = b.textContent;</script>
 </body></html>

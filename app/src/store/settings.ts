@@ -15,6 +15,26 @@ export function normalizeOllamaUrl(input: string): string {
   return url;
 }
 
+/** A canonical HTTP(S) hostname for a site rule; rejects ports, paths and public-suffix-like input. */
+export function normalizeRuleSite(input: string): string | null {
+  let value = input.trim().toLowerCase();
+  if (!value) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `https://${value}`;
+  // URL drops an explicit default port (https://x:443 -> port ""), so reject it before parsing.
+  if (/:\d+(?:[/?#]|$)/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password) return null;
+    if (url.pathname !== '/' || url.search || url.hash) return null;
+    const host = url.hostname.replace(/^www\./, '');
+    const domain = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+    if (host !== 'localhost' && !domain.test(host)) return null;
+    return host;
+  } catch {
+    return null;
+  }
+}
+
 const defaultArea = (): KeyValueArea => chrome.storage.local;
 
 export async function getSettings(area: KeyValueArea = defaultArea()): Promise<Settings> {

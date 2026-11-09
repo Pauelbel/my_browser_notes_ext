@@ -1,6 +1,6 @@
 // Data shapes of the assistant: settings, profiles, conversations and messages.
 
-export type ToolName = 'snapshot' | 'find' | 'read' | 'screenshot' | 'notes_search' | 'notes_read'
+export type ToolName = 'snapshot' | 'find' | 'read' | 'locator' | 'screenshot' | 'notes_search' | 'notes_read'
   | 'tabs' | 'navigate' | 'click' | 'hover' | 'scroll' | 'type' | 'set' | 'press' | 'wait' | 'handle_dialog'
   | 'highlight' | 'clear_highlights' | 'ask_user' | 'notes_create' | 'notes_append' | 'done'
   | 'console_log' | 'network_log' | 'page_checks';
@@ -40,12 +40,21 @@ export interface ToolStep {
   input: string;
   /** The arguments as called, for the history the model is sent (absent when large, or in steps saved before). */
   args?: unknown;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'uncertain';
   /** The first line of the result, or the error. */
   summary: string;
 }
 
 export type MessageStatus = 'streaming' | 'done' | 'stopped' | 'failed' | 'interrupted';
+
+/** Approximate tokens that would occupy the model context for this state of the chat. */
+export interface ContextUsage {
+  used: number;
+  limit: number;
+  system: number;
+  tools: number;
+  history: number;
+}
 
 export interface Message {
   id: string;
@@ -58,6 +67,7 @@ export interface Message {
   error?: string;
   model?: string;
   steps?: ToolStep[];
+  context?: ContextUsage;
   createdAt: number;
 }
 

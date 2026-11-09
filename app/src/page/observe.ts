@@ -97,6 +97,29 @@ export class Observer {
     }
     return {header: header(raw), body, notices};
   }
+
+  /** Resolve an exact semantic target without silently picking the first similarly named control. */
+  async semanticRef(q: {role: string; name: string; nth?: number; within?: string}): Promise<string> {
+    const {roots} = await this.observe();
+    let scope = roots;
+    if (q.within) {
+      const record = this.refs.get(q.within);
+      const container = all(roots).find(n => n.backendNodeId === record.backendNodeId && n.loaderId === record.loaderId);
+      if (!container) throw new PageError('REF_STALE', `Область ${q.within} устарела: сделайте snapshot.`);
+      scope = [container];
+    }
+    const role = fold(q.role.trim()), name = fold(q.name.trim());
+    const matches = all(scope).filter(n => n.interactive && n.backendNodeId !== undefined && fold(n.role) === role && fold(n.name) === name);
+    if (!matches.length) throw new PageError('NOT_FOUND', `Точного элемента ${q.role} «${q.name}» не найдено: сделайте snapshot или уточните within.`);
+    if (q.nth === undefined && matches.length !== 1) {
+      throw new PageError('AMBIGUOUS_TARGET', `Найдено ${matches.length} точных элементов ${q.role} «${q.name}». Укажите within или nth; первый автоматически не выбирается.`);
+    }
+    const index = q.nth === undefined ? 0 : q.nth - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= matches.length) {
+      throw new PageError('NOT_FOUND', `Для ${q.role} «${q.name}» nth должен быть от 1 до ${matches.length}.`);
+    }
+    return this.refs.assign(matches[index]);
+  }
 }
 
 const inline = (nodes: ONode[]): string => nodes.map(n => (n.kind === 'text' ? n.name : n.role === 'link' ? link(n) : n.name || inline(n.children))).join(' ').replace(/\s+/g, ' ').trim();

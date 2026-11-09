@@ -173,6 +173,7 @@ var TOOL_CATALOGUE = [
   { name: "snapshot", label: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", group: "read" },
   { name: "find", label: "\u041D\u0430\u0439\u0442\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B", group: "read" },
   { name: "read", label: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", group: "read" },
+  { name: "locator", label: "\u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 CSS/XPath", group: "read" },
   { name: "screenshot", label: "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442", group: "read" },
   { name: "notes_search", label: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0437\u0430\u043C\u0435\u0442\u043A\u0430\u043C", group: "read" },
   { name: "notes_read", label: "\u0427\u0442\u0435\u043D\u0438\u0435 \u0437\u0430\u043C\u0435\u0442\u043E\u043A", group: "read" },
@@ -219,6 +220,24 @@ var LEGACY_PROMPTS = {
     "\u0422\u044B \u043E\u043F\u044B\u0442\u043D\u044B\u0439 QA-\u0438\u043D\u0436\u0435\u043D\u0435\u0440 \u0438 \u0438\u0449\u0435\u0448\u044C \u0431\u0430\u0433\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435. \u041E\u0431\u0445\u043E\u0434\u0438 \u0440\u0430\u0437\u0434\u0435\u043B\u044B \u0441\u0430\u0439\u0442\u0430, \u0441\u043E\u0431\u0438\u0440\u0430\u0439 \u043E\u0448\u0438\u0431\u043A\u0438 \u043A\u043E\u043D\u0441\u043E\u043B\u0438 \u0438 \u0443\u043F\u0430\u0432\u0448\u0438\u0435 \u0441\u0435\u0442\u0435\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B, \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u043D\u0430 \u0431\u0438\u0442\u044B\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u0438 \u0441\u0441\u044B\u043B\u043A\u0438, \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0431\u0435\u0437 \u043F\u043E\u0434\u043F\u0438\u0441\u0435\u0439 \u0438 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432\u0451\u0440\u0441\u0442\u043A\u0438. \u0414\u043B\u044F \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0431\u0430\u0433\u0430 \u0443\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u0448\u0430\u0433\u0438 \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F, \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438 \u0444\u0430\u043A\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442. \u041E\u0442\u0434\u0435\u043B\u044F\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B \u043E\u0442 \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u0439."
   ]
 };
+
+// src/agent/tool-policy.ts
+var MUTATING_TOOLS = /* @__PURE__ */ new Set([
+  "click",
+  "hover",
+  "scroll",
+  "type",
+  "set",
+  "press",
+  "navigate",
+  "handle_dialog",
+  "tabs",
+  "highlight",
+  "clear_highlights",
+  "notes_create",
+  "notes_append"
+]);
+var isMutatingTool = (name5) => MUTATING_TOOLS.has(name5);
 
 // src/store/assistant-db.ts
 var CHANNEL = "assistant";
@@ -326,7 +345,11 @@ async function markInterrupted() {
     const store = tx.objectStore("messages");
     const all3 = await done(store.getAll());
     const found = all3.filter((m) => m.status === "streaming");
-    for (const m of found) store.put({ ...m, status: "interrupted", steps: m.steps?.map((s) => s.status === "running" ? { ...s, status: "error", summary: "\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D: \u043E\u0442\u0432\u0435\u0442 \u043F\u0440\u0435\u0440\u0432\u0430\u043D" } : s) });
+    for (const m of found) store.put({ ...m, status: "interrupted", steps: m.steps?.map((s) => s.status !== "running" ? s : {
+      ...s,
+      status: isMutatingTool(s.name) ? "uncertain" : "error",
+      summary: isMutatingTool(s.name) ? "\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D: \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D; \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0442\u0435\u043A\u0443\u0449\u0435\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435" : "\u043D\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D: \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u044F\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0435, \u0435\u0433\u043E \u043C\u043E\u0436\u043D\u043E \u0431\u0435\u0437\u043E\u043F\u0430\u0441\u043D\u043E \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"
+    }) });
     return found;
   });
   for (const id of new Set(stuck.map((m) => m.conversationId))) announce(id);
@@ -392,6 +415,9 @@ function matches(note, query) {
   const needle = normalize(query.trim());
   if (!needle) return true;
   return [note.title, note.body, ...note.tags].some((text3) => normalize(text3 || "").includes(needle));
+}
+function parseTags(text3) {
+  return [...new Set(text3.split(/[\s,]+/).map((tag) => tag.replace(/^#+/, "")).filter(Boolean))];
 }
 
 // db.js
@@ -482,7 +508,7 @@ ${neutralize(`${head}
 ${body}`)}
 ${NOTE_END}`;
 }
-async function notesCreate(title, body, folder) {
+async function notesCreate(title, body, folder, tags = []) {
   const { folders } = await all();
   let folderId = null;
   if (folder) {
@@ -490,17 +516,27 @@ async function notesCreate(title, body, folder) {
     folderId = folders.find((f) => folderPath(folders, f.id).join(" / ").toLowerCase() === want)?.id ?? null;
   }
   const note = await createNote(folderId);
-  await putNote({ ...note, title, body });
-  return `\u0417\u0430\u043C\u0435\u0442\u043A\u0430 \xAB${title}\xBB \u0441\u043E\u0437\u0434\u0430\u043D\u0430 (${note.id}) \u0432 \xAB${pathOf(folders, folderId)}\xBB.${folder && !folderId ? ` \u041F\u0430\u043F\u043A\u0438 \xAB${folder}\xBB \u043D\u0435\u0442 \u2014 \u0437\u0430\u043C\u0435\u0442\u043A\u0430 \u0432 \u043A\u043E\u0440\u043D\u0435.` : ""}`;
+  const normalizedTags = parseTags(tags.join(" "));
+  await putNote({ ...note, title, body, tags: normalizedTags });
+  return `\u0417\u0430\u043C\u0435\u0442\u043A\u0430 \xAB${title}\xBB \u0441\u043E\u0437\u0434\u0430\u043D\u0430 (${note.id}) \u0432 \xAB${pathOf(folders, folderId)}\xBB.${folder && !folderId ? ` \u041F\u0430\u043F\u043A\u0438 \xAB${folder}\xBB \u043D\u0435\u0442 \u2014 \u0437\u0430\u043C\u0435\u0442\u043A\u0430 \u0432 \u043A\u043E\u0440\u043D\u0435.` : ""}
+[note-receipt operation=create id=${note.id} fields=title,body,tags,folder tags=${normalizedTags.length}]`;
 }
-async function notesAppend(id, text3) {
+async function notesAppend(id, text3, tags = []) {
   const { notes } = await all();
   const note = notes.find((n) => n.id === id);
   if (!note) throw new Error(`\u0417\u0430\u043C\u0435\u0442\u043A\u0430 ${id} \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430.`);
-  await putNote({ ...note, body: note.body ? `${note.body}
+  if (!text3 && !tags.length) throw new Error("\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u0442\u0435\u043A\u0441\u0442 \u0438\u043B\u0438 \u0442\u0435\u0433\u0438 \u0434\u043B\u044F \u0437\u0430\u043C\u0435\u0442\u043A\u0438.");
+  const nextBody = text3 ? note.body ? `${note.body}
 
-${text3}` : text3 });
-  return `\u0414\u043E\u043F\u0438\u0441\u0430\u043D\u043E \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \xAB${noteTitle(note)}\xBB.`;
+${text3}` : text3 : note.body;
+  const nextTags = parseTags([...note.tags, ...tags].join(" "));
+  await putNote({ ...note, body: nextBody, tags: nextTags });
+  const fields = [text3 ? "body" : "", tags.length ? "tags" : ""].filter(Boolean).join(",");
+  const receipt = `[note-receipt operation=append id=${id} fields=${fields} tags=${nextTags.length}]`;
+  if (text3 && tags.length) return `\u0422\u0435\u043A\u0441\u0442 \u0438 \u0442\u0435\u0433\u0438 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u044B \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \xAB${noteTitle(note)}\xBB.
+${receipt}`;
+  return `${tags.length ? `\u0422\u0435\u0433\u0438 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u044B \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \xAB${noteTitle(note)}\xBB.` : `\u0414\u043E\u043F\u0438\u0441\u0430\u043D\u043E \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \xAB${noteTitle(note)}\xBB.`}
+${receipt}`;
 }
 var notesApi = { search: notesSearch, read: notesRead, create: notesCreate, append: notesAppend };
 
@@ -37371,14 +37407,20 @@ var ollamaStream = async function* ({ settings, system, messages, signal, tools,
     if (part.type === "text-delta") yield { type: "text", delta: part.text };
     else if (part.type === "reasoning-delta") yield { type: "reasoning", delta: part.text };
     else if (part.type === "tool-call") yield { type: "tool-call", id: part.toolCallId, name: part.toolName, input: part.input };
-    else if (part.type === "tool-result") yield { type: "tool-result", id: part.toolCallId, ok: !String(part.output).startsWith("\u043E\u0448\u0438\u0431\u043A\u0430"), summary: firstLine(part.output) };
-    else if (part.type === "tool-error") yield { type: "tool-result", id: part.toolCallId, ok: false, summary: firstLine(part.error instanceof Error ? part.error.message : part.error) };
+    else if (part.type === "tool-result") {
+      const value = String(part.output ?? "");
+      yield { type: "tool-result", id: part.toolCallId, ok: !value.startsWith("\u043E\u0448\u0438\u0431\u043A\u0430"), summary: summarizeResult(value), value };
+    } else if (part.type === "tool-error") yield { type: "tool-result", id: part.toolCallId, ok: false, summary: summarizeResult(part.error instanceof Error ? part.error.message : part.error) };
     else if (part.type === "finish-step") yield { type: "step" };
     else if (part.type === "error") throw part.error;
   }
 };
-function firstLine(value) {
-  return String(value ?? "").split("\n")[0].slice(0, 160);
+function summarizeResult(value) {
+  const text3 = String(value ?? "");
+  const lines = text3.split("\n").map((s) => s.trim()).filter((s) => s && s !== "<<<page-content>>>" && s !== "<<<end-page-content>>>");
+  const head = lines.find((s) => !s.startsWith("[action-receipt ")) ?? "";
+  const receipt = lines.find((s) => s.startsWith("[action-receipt ")) ?? "";
+  return [head.slice(0, 220), receipt.slice(0, 260)].filter(Boolean).join(" \xB7 ").slice(0, 480);
 }
 
 // src/page/capture.ts
@@ -37689,7 +37731,17 @@ function buildOutline(capture2) {
     const children = buildFrame(frame, 0, ctx);
     if (children.length) roots.push({ kind: "element", role: "Iframe", name: frame.url, states: [], children, interactive: false, frameId: frame.frameId, sessionId: frame.sessionId, loaderId: frame.loaderId });
   }
+  annotateRecordContexts(roots);
   return { roots, notices: ctx.notices };
+}
+var RECORD_ROLES = /* @__PURE__ */ new Set(["row", "listitem", "article", "treeitem"]);
+var contextText = (node2) => cleanText([node2.name, node2.value ?? "", ...node2.children.map(contextText)].join(" ")).slice(0, 240);
+function annotateRecordContexts(nodes, inherited = "") {
+  for (const node2 of nodes) {
+    const context = RECORD_ROLES.has(node2.role) ? contextText(node2) : inherited;
+    if (node2.interactive && context) node2.recordContext = context;
+    annotateRecordContexts(node2.children, context);
+  }
 }
 
 // src/page/render.ts
@@ -37891,12 +37943,21 @@ var PROBE_SOURCE = `(() => {
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, {once: true});
   const fold = s => s.toLowerCase().replace(/\u0451/g, '\u0435');
   const highlights = new Map();
+  const highlightTimers = new Map();
+  const armExpiry = owner => {
+    const key = owner || '*';
+    clearTimeout(highlightTimers.get(key));
+    highlightTimers.set(key, setTimeout(() => globalThis.__assistant && globalThis.__assistant.clearHighlights(owner || undefined), 10 * 60 * 1000));
+  };
   let layer = null;
   const ensureLayer = () => {
     if (layer && layer.host.isConnected) return layer;
     const host = document.createElement('div');
     host.setAttribute('${OVERLAY_ATTR2}', '');
-    for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
+    // A zero-sized host with fixed children cannot cover the page even in browser hit-testing implementations
+    // that handle pointer-events on shadow hosts inconsistently.
+    for (const [k, v] of [['position', 'fixed'], ['left', '0'], ['top', '0'], ['width', '0'], ['height', '0'], ['overflow', 'visible'],
+      ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
     const root = host.attachShadow({mode: 'closed'});
     document.documentElement.append(host);
     layer = {host, root, boxes: []};
@@ -37912,7 +37973,7 @@ var PROBE_SOURCE = `(() => {
   };
   globalThis.__assistant = {
     ${CHECKS_SOURCE}
-    highlightText(query, name) {
+    highlightText(query, name, owner) {
       const words = fold(query).split(/\\s+/).filter(Boolean); if (!words.length) return 0;
       // The visible text as one string with each character's node and offset: sites split a phrase over elements
       // (YouTube writes \xAB29\xBB and \xAB\u043A\u043E\u043C\u043C\u0435\u043D\u0442\u0430\u0440\u0438\u0435\u0432\xBB in two spans), so a match may span nodes.
@@ -37949,14 +38010,16 @@ var PROBE_SOURCE = `(() => {
       for (const r of ranges) h.add(r);
       highlights.set(name, h);
       CSS.highlights.set(name, h);
+      armExpiry(owner);
       return ranges.length;
     },
-    highlightElement(el, color) {
+    highlightElement(el, color, owner) {
       const l = ensureLayer();
       const box = document.createElement('div');
       l.root.append(box);
-      l.boxes.push({el, box, color});
+      l.boxes.push({el, box, color, owner: owner || ''});
       l.place();
+      armExpiry(owner);
       return 1;
     },
     border(on, color) {
@@ -37969,10 +38032,15 @@ var PROBE_SOURCE = `(() => {
         ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
       document.documentElement.append(host);
     },
-    clearHighlights() {
-      for (const name of highlights.keys()) CSS.highlights.delete(name);
-      highlights.clear();
-      if (layer) { layer.host.remove(); layer = null; }
+    clearHighlights(owner) {
+      const prefix = owner ? 'assistant-' + owner + '-' : '';
+      for (const name of [...highlights.keys()]) if (!owner || name.startsWith(prefix) || /^assistant-(yellow|green|blue|red|orange)$/.test(name)) { CSS.highlights.delete(name); highlights.delete(name); }
+      if (layer && owner) {
+        for (const item of layer.boxes.filter(x => x.owner === owner || !x.owner)) item.box.remove();
+        layer.boxes = layer.boxes.filter(x => x.owner !== owner && x.owner);
+        if (!layer.boxes.length) { layer.host.remove(); layer = null; }
+      } else if (layer) { layer.host.remove(); layer = null; }
+      const key = owner || '*'; clearTimeout(highlightTimers.get(key)); highlightTimers.delete(key);
     },
     state,
     readyState: () => document.readyState,
@@ -38161,6 +38229,28 @@ var Observer = class {
     }
     return { header: header(raw), body, notices };
   }
+  /** Resolve an exact semantic target without silently picking the first similarly named control. */
+  async semanticRef(q) {
+    const { roots } = await this.observe();
+    let scope = roots;
+    if (q.within) {
+      const record2 = this.refs.get(q.within);
+      const container = all2(roots).find((n) => n.backendNodeId === record2.backendNodeId && n.loaderId === record2.loaderId);
+      if (!container) throw new PageError("REF_STALE", `\u041E\u0431\u043B\u0430\u0441\u0442\u044C ${q.within} \u0443\u0441\u0442\u0430\u0440\u0435\u043B\u0430: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot.`);
+      scope = [container];
+    }
+    const role = fold(q.role.trim()), name5 = fold(q.name.trim());
+    const matches2 = all2(scope).filter((n) => n.interactive && n.backendNodeId !== void 0 && fold(n.role) === role && fold(n.name) === name5);
+    if (!matches2.length) throw new PageError("NOT_FOUND", `\u0422\u043E\u0447\u043D\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${q.role} \xAB${q.name}\xBB \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E: \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot \u0438\u043B\u0438 \u0443\u0442\u043E\u0447\u043D\u0438\u0442\u0435 within.`);
+    if (q.nth === void 0 && matches2.length !== 1) {
+      throw new PageError("AMBIGUOUS_TARGET", `\u041D\u0430\u0439\u0434\u0435\u043D\u043E ${matches2.length} \u0442\u043E\u0447\u043D\u044B\u0445 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u0432 ${q.role} \xAB${q.name}\xBB. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 within \u0438\u043B\u0438 nth; \u043F\u0435\u0440\u0432\u044B\u0439 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438 \u043D\u0435 \u0432\u044B\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044F.`);
+    }
+    const index = q.nth === void 0 ? 0 : q.nth - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= matches2.length) {
+      throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${q.role} \xAB${q.name}\xBB nth \u0434\u043E\u043B\u0436\u0435\u043D \u0431\u044B\u0442\u044C \u043E\u0442 1 \u0434\u043E ${matches2.length}.`);
+    }
+    return this.refs.assign(matches2[index]);
+  }
 };
 var inline = (nodes) => nodes.map((n) => n.kind === "text" ? n.name : n.role === "link" ? link(n) : n.name || inline(n.children)).join(" ").replace(/\s+/g, " ").trim();
 var link = (n) => `[${n.name || inline(n.children)}](${n.href ?? ""})`;
@@ -38204,13 +38294,15 @@ var RefRegistry = class {
         loaderId: node2.loaderId,
         role: node2.role,
         name: node2.name,
-        proxy: node2.proxy
+        proxy: node2.proxy,
+        recordContext: node2.recordContext
       };
       this.#byKey.set(key, record2);
       this.#byRef.set(record2.ref, record2);
     } else {
       record2.role = node2.role;
       record2.name = node2.name;
+      record2.recordContext = node2.recordContext;
     }
     node2.ref = record2.ref;
     return record2.ref;
@@ -38267,6 +38359,17 @@ async function resolveTarget(session, refs, ref, probes) {
     const role = nodes[0]?.role?.value ?? "", name5 = cleanText(String(nodes[0]?.name?.value ?? ""));
     if (role !== record2.role || name5 !== record2.name) {
       throw new PageError("REF_STALE", staleText(ref, `\u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F (\u0431\u044B\u043B ${record2.role} "${record2.name}", \u0441\u0442\u0430\u043B ${role} "${name5}")`));
+    }
+  }
+  if (record2.recordContext) {
+    const current = await callOn(session, frame, objectId, `function () {
+      const start = this.nodeType === 1 ? this : this.parentElement;
+      const row = start && start.closest('[role="row"], [role="listitem"], [role="article"], [role="treeitem"], tr, li, article');
+      return row ? (row.innerText || row.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 240) : '';
+    }`).catch(() => "");
+    const expected = cleanText(record2.recordContext).slice(0, 240);
+    if (current && expected && cleanText(current) !== expected) {
+      throw new PageError("REF_STALE", staleText(ref, "\u0442\u0435\u043F\u0435\u0440\u044C \u043D\u0430\u0445\u043E\u0434\u0438\u0442\u0441\u044F \u0432 \u0434\u0440\u0443\u0433\u043E\u0439 \u0437\u0430\u043F\u0438\u0441\u0438 \u0441\u043F\u0438\u0441\u043A\u0430 (\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u0435\u0440\u0435\u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u043B\u0430 DOM-\u0443\u0437\u0435\u043B)"));
     }
   }
   return { record: record2, frame, objectId };
@@ -38910,15 +39013,19 @@ var COLORS = {
   red: { fill: "rgba(255, 80, 80, 0.45)", line: "#e53935" },
   orange: { fill: "rgba(255, 165, 0, 0.5)", line: "#f08c00" }
 };
-var STYLE_TEXT = Object.entries(COLORS).map(([name5, c]) => `::highlight(assistant-${name5}) { background-color: ${c.fill}; color: inherit; }`).join("\n");
 var Highlighter = class {
   #session;
   #probes;
   /** Frames (by document) that already have the style sheet. */
   #styled = /* @__PURE__ */ new Set();
-  constructor(session, probes) {
+  #owner;
+  constructor(session, probes, owner = "") {
     this.#session = session;
     this.#probes = probes;
+    this.#owner = owner.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  }
+  #name(color) {
+    return `assistant-${this.#owner ? `${this.#owner}-` : ""}${color}`;
   }
   async #style(frameId) {
     const frame = this.#session.frames.get(frameId);
@@ -38927,7 +39034,8 @@ var Highlighter = class {
     if (this.#styled.has(key)) return;
     await this.#session.cdp.send("CSS.enable", {}, frame.sessionId);
     const { styleSheetId } = await this.#session.cdp.send("CSS.createStyleSheet", { frameId }, frame.sessionId);
-    await this.#session.cdp.send("CSS.setStyleSheetText", { styleSheetId, text: STYLE_TEXT }, frame.sessionId);
+    const styles = Object.entries(COLORS).map(([name5, c]) => `::highlight(${this.#name(name5)}) { background-color: ${c.fill}; color: inherit; }`).join("\n");
+    await this.#session.cdp.send("CSS.setStyleSheetText", { styleSheetId, text: styles }, frame.sessionId);
     this.#styled.add(key);
   }
   /** Highlights every visible occurrence of the text in every frame; returns how many. */
@@ -38936,18 +39044,29 @@ var Highlighter = class {
     for (const frame of this.#session.frames.list()) {
       try {
         await this.#style(frame.frameId);
-        count += await probeEval(this.#session, frame.frameId, this.#probes, `__assistant.highlightText(${JSON.stringify(text3)}, ${JSON.stringify(`assistant-${color}`)})`);
+        count += await probeEval(
+          this.#session,
+          frame.frameId,
+          this.#probes,
+          `__assistant.highlightText(${JSON.stringify(text3)}, ${JSON.stringify(this.#name(color))}, ${JSON.stringify(this.#owner)})`
+        );
       } catch {
       }
     }
     return count;
   }
   async element(target, color) {
-    await callOn(this.#session, target.frame, target.objectId, `function (color) { return __assistant.highlightElement(this.nodeType === 1 ? this : this.parentElement, color); }`, [{ value: COLORS[color].line }]);
+    await callOn(
+      this.#session,
+      target.frame,
+      target.objectId,
+      `function (color, owner) { return __assistant.highlightElement(this.nodeType === 1 ? this : this.parentElement, color, owner); }`,
+      [{ value: COLORS[color].line }, { value: this.#owner }]
+    );
   }
   async clear() {
     for (const frame of this.#session.frames.list()) {
-      await probeEval(this.#session, frame.frameId, this.#probes, "__assistant.clearHighlights()").catch(() => {
+      await probeEval(this.#session, frame.frameId, this.#probes, `__assistant.clearHighlights(${JSON.stringify(this.#owner || void 0)})`).catch(() => {
       });
     }
   }
@@ -38956,6 +39075,246 @@ function checkColor(color) {
   const c = color ?? "yellow";
   if (!(c in COLORS)) throw new PageError("NOT_FOUND", `\u0426\u0432\u0435\u0442 ${color} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(COLORS).join(", ")}.`);
   return c;
+}
+
+// src/page/locator.ts
+function inspectLocator() {
+  const element = this;
+  const root = element.getRootNode();
+  const tag = element.localName.toLowerCase();
+  const useful = ["id", "data-testid", "data-test", "data-qa", "aria-label", "name", "role", "class", "title", "type"];
+  const attributes = {};
+  for (const name5 of useful) {
+    const value = element.getAttribute(name5);
+    if (value) attributes[name5] = value;
+  }
+  const text3 = (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const cssValue = (value) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\a ")}"`;
+  const cssId = (value) => value.replace(/(^-?\d)|[^a-zA-Z0-9_-]/g, (char) => `\\${char.codePointAt(0).toString(16)} `);
+  const selectsOnly = (selector, node2) => {
+    try {
+      const found = root.querySelectorAll(selector);
+      return found.length === 1 && found[0] === node2;
+    } catch {
+      return false;
+    }
+  };
+  const uniqueCss = (selector) => {
+    return selectsOnly(selector, element);
+  };
+  const looksGenerated = (value) => value.length > 72 || /(?:^|[-_])(?:\d{5,}|[a-f0-9]{12,})(?:$|[-_])/i.test(value) || /^(?:ember|react|vue|radix|headlessui|:r)[-_:.]?\d/i.test(value);
+  const stableId = attributes.id && !looksGenerated(attributes.id) ? `#${cssId(attributes.id)}` : "";
+  const cssCandidates = [
+    ...["data-testid", "data-test", "data-qa"].filter((name5) => attributes[name5]).map((name5) => `${tag}[${name5}=${cssValue(attributes[name5])}]`),
+    stableId,
+    ...["aria-label", "name", "title", "type"].filter((name5) => attributes[name5]).map((name5) => `${tag}[${name5}=${cssValue(attributes[name5])}]`),
+    attributes.id && !stableId ? `#${cssId(attributes.id)}` : ""
+  ].filter(Boolean);
+  let css = cssCandidates.find(uniqueCss) ?? "";
+  if (!css) {
+    const leaves = ["data-testid", "data-test", "data-qa", "aria-label", "name", "title", "type"].filter((name5) => attributes[name5]).map((name5) => `${tag}[${name5}=${cssValue(attributes[name5])}]`);
+    let ancestor = element.parentElement;
+    while (ancestor && !css) {
+      const currentAncestor = ancestor;
+      const ancestorTag = ancestor.localName.toLowerCase();
+      const anchors = [];
+      const ancestorId = ancestor.getAttribute("id");
+      if (ancestorId) anchors.push(`#${cssId(ancestorId)}`);
+      for (const name5 of ["data-testid", "data-test", "data-qa", "aria-label", "name"]) {
+        const value = ancestor.getAttribute(name5);
+        if (value) anchors.push(`${ancestorTag}[${name5}=${cssValue(value)}]`);
+      }
+      anchors.push(ancestorTag);
+      for (const anchor2 of anchors.filter((candidate) => selectsOnly(candidate, currentAncestor))) {
+        css = leaves.map((leaf) => `${anchor2} ${leaf}`).find(uniqueCss) ?? "";
+        if (css) break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+  }
+  if (!css) {
+    const parts = [];
+    let current = element;
+    while (current) {
+      const currentTag = current.localName.toLowerCase();
+      const currentName = current.localName;
+      const parent = current.parentElement;
+      if (!parent) {
+        parts.unshift(currentTag);
+        break;
+      }
+      const same = Array.from(parent.children).filter((child) => child.localName === currentName);
+      parts.unshift(`${currentTag}:nth-of-type(${same.indexOf(current) + 1})`);
+      const trial = parts.join(" > ");
+      if (uniqueCss(trial)) break;
+      current = parent;
+    }
+    css = parts.join(" > ");
+  }
+  let xpath = null;
+  if (root.nodeType === 9) {
+    const doc = root;
+    const literal2 = (value) => {
+      if (!value.includes("'")) return `'${value}'`;
+      if (!value.includes('"')) return `"${value}"`;
+      return `concat(${value.split("'").map((part) => `'${part}'`).join(`, "'", `)})`;
+    };
+    const uniqueXpath = (candidate) => {
+      try {
+        const result = doc.evaluate(candidate, doc, null, doc.defaultView.XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        return result.snapshotLength === 1 && result.snapshotItem(0) === element;
+      } catch {
+        return false;
+      }
+    };
+    const xpathCandidates = [];
+    for (const name5 of ["data-testid", "data-test", "data-qa"]) if (attributes[name5]) xpathCandidates.push(`//${tag}[@${name5}=${literal2(attributes[name5])}]`);
+    if (attributes.id && !looksGenerated(attributes.id)) xpathCandidates.push(`//*[@id=${literal2(attributes.id)}]`);
+    for (const name5 of ["aria-label", "name", "title", "type"]) if (attributes[name5]) xpathCandidates.push(`//${tag}[@${name5}=${literal2(attributes[name5])}]`);
+    let ancestor = element.parentElement;
+    const leaves = ["data-testid", "data-test", "data-qa", "aria-label", "name", "title", "type"].filter((name5) => attributes[name5]).map((name5) => `${tag}[@${name5}=${literal2(attributes[name5])}]`);
+    while (ancestor) {
+      const ancestorTag = ancestor.localName.toLowerCase();
+      const anchors = [];
+      const ancestorId = ancestor.getAttribute("id");
+      if (ancestorId) anchors.push(`//*[@id=${literal2(ancestorId)}]`);
+      for (const name5 of ["data-testid", "data-test", "data-qa", "aria-label", "name"]) {
+        const value = ancestor.getAttribute(name5);
+        if (value) anchors.push(`//${ancestorTag}[@${name5}=${literal2(value)}]`);
+      }
+      anchors.push(`//${ancestorTag}`);
+      for (const anchor2 of anchors) {
+        for (const leaf of leaves) xpathCandidates.push(`${anchor2}//${leaf}`);
+      }
+      ancestor = ancestor.parentElement;
+    }
+    if (text3 && text3.length <= 160) xpathCandidates.push(`//${tag}[normalize-space(.)=${literal2(text3)}]`);
+    if (attributes.id && looksGenerated(attributes.id)) xpathCandidates.push(`//*[@id=${literal2(attributes.id)}]`);
+    xpath = xpathCandidates.find(uniqueXpath) ?? null;
+    if (!xpath) {
+      const parts = [];
+      let current = element;
+      while (current) {
+        const currentName = current.localName;
+        const parent = current.parentElement;
+        const siblings = parent ? Array.from(parent.children).filter((child) => child.localName === currentName) : [current];
+        parts.unshift(`${current.localName.toLowerCase()}[${siblings.indexOf(current) + 1}]`);
+        current = parent;
+      }
+      const absolute = `/${parts.join("/")}`;
+      if (uniqueXpath(absolute)) xpath = absolute;
+    }
+  }
+  const candidates = [];
+  if (attributes.id) {
+    const query = `#${cssId(attributes.id)}`;
+    if (uniqueCss(query)) candidates.push({ kind: "id", value: attributes.id, query, stability: looksGenerated(attributes.id) ? "low" : "high" });
+  }
+  for (const name5 of ["data-testid", "data-test", "data-qa"]) if (attributes[name5]) {
+    const query = `${tag}[${name5}=${cssValue(attributes[name5])}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "testid", value: query, query, stability: "high" });
+  }
+  if (attributes["aria-label"]) {
+    const query = `${tag}[aria-label=${cssValue(attributes["aria-label"])}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "aria", value: query, query, stability: "medium" });
+  }
+  if (attributes.name) {
+    const query = `${tag}[name=${cssValue(attributes.name)}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "name", value: query, query, stability: "medium" });
+  }
+  if (attributes.role) {
+    const query = `${tag}[role=${cssValue(attributes.role)}]`;
+    if (uniqueCss(query)) candidates.push({ kind: "role", value: query, query, stability: "medium" });
+  }
+  for (const name5 of Array.from(element.classList)) {
+    const query = `.${cssId(name5)}`;
+    if (uniqueCss(query)) {
+      candidates.push({ kind: "class", value: query, query, stability: looksGenerated(name5) ? "low" : "medium" });
+      break;
+    }
+  }
+  if (uniqueCss(tag)) candidates.push({ kind: "tag", value: tag, query: tag, stability: "medium" });
+  if (css) candidates.push({ kind: "css", value: css, query: css, stability: css.includes(":nth-of-type") ? "low" : "high" });
+  if (xpath && root.nodeType === 9) candidates.push({
+    kind: "xpath",
+    value: xpath,
+    query: xpath,
+    stability: xpath.startsWith("/html[") || /^\/(?:[^/]+\[\d+\]\/)+/.test(xpath) ? "low" : "high"
+  });
+  return { tag, attributes, text: text3, css, xpath, scope: root.nodeType === 9 ? "document" : "shadow-root", candidates };
+}
+var locatorFunction = `function () { return (${inspectLocator.toString()}).call(this); }`;
+async function verifyCdpLocator(send, query, backendNodeId, sessionId) {
+  let searchId = "";
+  try {
+    await send("DOM.getDocument", { depth: 0, pierce: true }, sessionId);
+    const found = await send(
+      "DOM.performSearch",
+      { query, includeUserAgentShadowDOM: true },
+      sessionId
+    );
+    searchId = found.searchId;
+    if (found.resultCount !== 1) return false;
+    const result = await send("DOM.getSearchResults", { searchId, fromIndex: 0, toIndex: 1 }, sessionId);
+    if (result.nodeIds.length !== 1) return false;
+    const described = await send("DOM.describeNode", { nodeId: result.nodeIds[0] }, sessionId);
+    return described.node.backendNodeId === backendNodeId;
+  } catch {
+    return false;
+  } finally {
+    if (searchId) await send("DOM.discardSearchResults", { searchId }, sessionId).catch(() => {
+    });
+  }
+}
+
+// src/agent/locator-intent.ts
+var LOCATOR_KINDS = ["xpath", "css", "id", "testid", "aria", "name", "class", "tag", "role", "best"];
+function detectLocatorIntent(text3) {
+  const value = text3.toLocaleLowerCase("ru-RU");
+  const request = /(?:напиши|дай|найди|покажи|подбери|сгенерируй|составь|получи|нужен|нужна|какой|какая|give|find|write|generate|show|need)|(?:xpath|x[\s_-]*path|css|\bid\b|локатор|селектор|locator|selector)\s+(?:для|кнопк|элемент|пол)/i.test(value);
+  if (!request) return null;
+  if (/(?:data[\s_-]*test[\s_-]*id|test[\s_-]*id|тест[\s_-]*айди|дата[\s_-]*тест)/i.test(value)) return "testid";
+  if (/(?:xpath|x[\s_-]*path|икс[\s_-]*пат|хпат)/i.test(value)) return "xpath";
+  if (/(?:css[\s_-]*(?:selector|селектор)?|цсс[\s_-]*селектор)/i.test(value)) return "css";
+  if (/(?:\baria\b|aria[\s_-]*label|ариа[\s_-]*(?:метк|селектор))/i.test(value)) return "aria";
+  if (/(?:\bname\b|атрибут\s+name)/i.test(value)) return "name";
+  if (/(?:\bclass(?:name)?\b|класс(?:а|ом)?(?:\s+элемента)?)/i.test(value)) return "class";
+  if (/(?:\btag(?:name)?\b|тег(?:а|ом)?(?:\s+элемента)?)/i.test(value)) return "tag";
+  if (/(?:\brole\b|роль(?:ю|\s+элемента)?)/i.test(value)) return "role";
+  if (/(?:\bid\b|\bайди\b|идентификатор\s+(?:элемента|кнопки|поля|локатор))/i.test(value)) return "id";
+  if (/(?:локатор|селектор|locator|selector)/i.test(value)) return "best";
+  return null;
+}
+var START = "[[[assistant-verified-locator-answer:v1]]]";
+var END = "[[[end-assistant-verified-locator-answer:v1]]]";
+function wrapLocatorAnswer(answer) {
+  return `${START}
+${answer.trim()}
+${END}`;
+}
+function extractLocatorAnswer(text3) {
+  const from = text3.lastIndexOf(START);
+  if (from < 0) return null;
+  const start = from + START.length;
+  const to = text3.indexOf(END, start);
+  return to < 0 ? null : text3.slice(start, to).trim();
+}
+var locatorKindLabel = (kind) => ({
+  xpath: "XPath",
+  css: "CSS",
+  id: "ID",
+  testid: "Test ID",
+  aria: "ARIA",
+  name: "Name",
+  class: "Class",
+  tag: "Tag",
+  role: "Role"
+})[kind];
+
+// src/page/receipt.ts
+function renderReceipt(receipt) {
+  const post = receipt.postcondition.details ? `:${receipt.postcondition.details.replace(/\s+/g, " ").slice(0, 160)}` : "";
+  return `[action-receipt dispatched=${receipt.dispatched} consequential=${Boolean(receipt.consequential)} effect=${receipt.effect.verdict} postcondition=${receipt.postcondition.verdict}${post} page.rev=${receipt.page.revision} changed=${receipt.page.changed}]`;
 }
 
 // src/page/tools.ts
@@ -38994,7 +39353,11 @@ function pageText(head, body, notices) {
 function errorResult(error62) {
   if (error62 instanceof PageError) {
     const delivered = error62.delivered === true ? " \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430 \u0431\u044B\u043B\u043E \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : error62.delivered === "unknown" ? " \u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E, \u0434\u043E\u0448\u043B\u043E \u043B\u0438 \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u0432\u0432\u043E\u0434\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443, \u043F\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043C \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0442\u044C." : "";
-    return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error62.code}: ${neutralize2(error62.message)}${delivered}` };
+    return {
+      ok: false,
+      text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${error62.code}: ${neutralize2(error62.message)}${delivered}`,
+      error: { code: error62.code, retryable: !["USER_DECLINED", "SITE_BLOCKED", "PAGE_NOT_SUPPORTED", "SESSION_DISPOSED"].includes(error62.code), dispatched: error62.delivered }
+    };
   }
   return { ok: false, text: `\u043E\u0448\u0438\u0431\u043A\u0430 INTERNAL: ${neutralize2(error62 instanceof Error ? error62.message : String(error62))}` };
 }
@@ -39009,6 +39372,9 @@ var PageTools = class {
   #highlights = [];
   /** A page dialog that is open now; while it is, the page answers nothing but handleDialog. */
   dialog;
+  #revision = 0;
+  #disposed = false;
+  #offs = [];
   gate;
   constructor(session, options) {
     this.session = session;
@@ -39016,24 +39382,31 @@ var PageTools = class {
     this.gate = options.gate;
     this.refs = new RefRegistry(session.epoch);
     this.observer = new Observer(session, this.refs);
-    this.highlighter = new Highlighter(session, this.observer.probes);
+    this.highlighter = new Highlighter(session, this.observer.probes, options.ownerId);
     this.diagnostics = session.diagnostics;
-    session.cdp.on((method, _params, sessionId) => {
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => {
       if (method === "Page.loadEventFired" && !sessionId) setTimeout(() => void this.#restoreHighlights(), 300);
-    });
-    session.cdp.on((method) => {
+    }));
+    this.#offs.push(session.cdp.on((method) => {
       if (method === "Page.javascriptDialogClosed") this.dialog = void 0;
-    });
-    session.cdp.on((method, params) => {
+    }));
+    this.#offs.push(session.cdp.on((method, params) => {
       if (method === "Page.javascriptDialogOpening") this.dialog = { type: params.type, message: params.message };
-    });
-    session.frames.onChange(() => {
+    }));
+    this.#offs.push(session.cdp.on((method, _params, sessionId) => {
+      if (!sessionId && (method === "Page.frameNavigated" || method === "Page.navigatedWithinDocument" || method === "DOM.documentUpdated")) this.#revision++;
+    }));
+    this.#offs.push(session.frames.onChange(() => {
       for (const f of session.frames.list()) this.refs.invalidateFrame(f.frameId, f.loaderId);
-    });
+    }));
+  }
+  get revision() {
+    return this.#revision;
   }
   /** Runs a tool. A plain string result is page-derived text (a receipt names page elements) and goes inside the markers. */
   async run(fn, allowDuringDialog = false, allowOnBlocked = false) {
     try {
+      if (this.#disposed) throw new PageError("SESSION_DISPOSED", "\u0421\u0435\u0441\u0441\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0443\u0436\u0435 \u0437\u0430\u043A\u0440\u044B\u0442\u0430: \u043E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u0437\u0430\u043D\u043E\u0432\u043E.");
       if (this.gate && !allowOnBlocked) {
         const site = siteOf(this.session.frames.main().url);
         if (site && await this.gate.blocked(site)) throw new PageError("SITE_BLOCKED", `\u0412\u043A\u043B\u0430\u0434\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435 ${site}, \u043A\u043E\u0442\u043E\u0440\u044B\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0437\u0430\u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u0430\u043B: \u0437\u0434\u0435\u0441\u044C \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0434\u0435\u043B\u0430\u0435\u0442. \u0423\u0439\u0434\u0438\u0442\u0435 \u0441\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (navigate) \u0438\u043B\u0438 \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443.`);
@@ -39042,7 +39415,20 @@ var PageTools = class {
         throw new PageError("DIALOG_OPEN", `\u041D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u043D\u0435\u0433\u043E (handle_dialog), \u0435\u0441\u043B\u0438 \u044D\u0442\u043E\u0442 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0435\u0441\u0442\u044C, \u0438\u043D\u0430\u0447\u0435 \u043F\u043E\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433.`);
       }
       const out = await fn();
-      return { ok: true, text: typeof out === "string" ? pageText("", out, []) : pageText(out.head, out.body, out.notices) };
+      if (typeof out === "string") return { ok: true, text: pageText("", out, []) };
+      if ("receipt" in out) {
+        const receipt = renderReceipt(out.receipt);
+        if (out.error) return {
+          ok: false,
+          text: `\u043E\u0448\u0438\u0431\u043A\u0430 ${out.error.code}: ${neutralize2(out.error.message)}
+${receipt}`,
+          receipt: out.receipt,
+          error: { code: out.error.code, retryable: true, dispatched: out.receipt.dispatched }
+        };
+        return { ok: true, text: `${pageText("", out.body, [])}
+${receipt}`, receipt: out.receipt };
+      }
+      return { ok: true, text: pageText(out.head, out.body, out.notices) };
     } catch (error62) {
       return errorResult(error62);
     }
@@ -39065,6 +39451,50 @@ var PageTools = class {
       return { head: r.header, body: r.body, notices: r.notices };
     });
   }
+  /** A fresh, independently verified locator for the current page revision. */
+  locator(args) {
+    return this.run(async () => ({
+      head: `\u041B\u043E\u043A\u0430\u0442\u043E\u0440 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \xB7 ${this.session.frames.main().url}`,
+      body: await this.#locatorBlock(args.ref, args.kind ?? "best"),
+      notices: []
+    }));
+  }
+  async #locatorBlock(ref, requested) {
+    const target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    const info = await callOn(this.session, target.frame, target.objectId, locatorFunction);
+    const send = (method, params, sessionId) => this.session.cdp.send(method, params, sessionId);
+    const verified = [];
+    for (const candidate of info.candidates) {
+      if (candidate.kind === "xpath" && info.scope === "shadow-root") continue;
+      if (await verifyCdpLocator(send, candidate.query, target.record.backendNodeId, target.frame.sessionId)) verified.push(candidate);
+    }
+    const rank = ["testid", "id", "css", "xpath", "aria", "role", "name", "class", "tag"];
+    const score = (candidate) => ({ high: 0, medium: 10, low: 20 })[candidate.stability] + rank.indexOf(candidate.kind);
+    verified.sort((a, b) => score(a) - score(b));
+    const exact = requested === "best" ? verified[0] : verified.find((candidate) => candidate.kind === requested);
+    const chosen = exact ?? verified.find((candidate) => candidate.kind !== requested);
+    const scope = info.scope === "shadow-root" ? "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: Shadow DOM; \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u0442\u044C \u0432\u043D\u0443\u0442\u0440\u0438 \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E shadowRoot." : target.frame.parentFrameId ? "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: document \u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0433\u043E iframe." : "\u041E\u0431\u043B\u0430\u0441\u0442\u044C: \u043E\u0441\u043D\u043E\u0432\u043D\u043E\u0439 document.";
+    const stability = { high: "\u0432\u044B\u0441\u043E\u043A\u0430\u044F", medium: "\u0441\u0440\u0435\u0434\u043D\u044F\u044F", low: "\u043D\u0438\u0437\u043A\u0430\u044F" };
+    let answer;
+    if (!chosen) {
+      const label = requested === "best" ? "\u043B\u043E\u043A\u0430\u0442\u043E\u0440" : locatorKindLabel(requested);
+      answer = `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0440\u043E\u0438\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0443\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0439 ${label} \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430. \u041F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0445 \u0430\u043B\u044C\u0442\u0435\u0440\u043D\u0430\u0442\u0438\u0432 \u0442\u043E\u0436\u0435 \u043D\u0435\u0442.`;
+    } else {
+      const label = locatorKindLabel(chosen.kind);
+      const prefix = exact ? "" : `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0442\u0440\u043E\u0438\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0443\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0439 ${locatorKindLabel(requested)} \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430.
+
+\u0411\u043B\u0438\u0436\u0430\u0439\u0448\u0438\u0439 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442 \u2014 ${label}:
+`;
+      const language = chosen.kind === "xpath" ? "xpath" : ["css", "testid", "aria", "name", "class", "role"].includes(chosen.kind) ? "css" : "text";
+      answer = `${prefix}${exact ? `${label}:
+` : ""}\`\`\`${language}
+${chosen.value}
+\`\`\`
+
+\u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E: \u0440\u043E\u0432\u043D\u043E 1 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0435 \u0438 \u0442\u043E\u0442 \u0436\u0435 DOM-\u044D\u043B\u0435\u043C\u0435\u043D\u0442. \u0421\u0442\u0430\u0431\u0438\u043B\u044C\u043D\u043E\u0441\u0442\u044C: ${stability[chosen.stability]}. ${scope} page.rev=${this.#revision}.`;
+    }
+    return wrapLocatorAnswer(answer);
+  }
   /** The page around the screen as full lines (text included), for the diff in a receipt. */
   async #describe() {
     const { capture: capture2, roots } = await this.observer.observe();
@@ -39074,7 +39504,7 @@ var PageTools = class {
    * One action on one label: resolve, check, watch, dispatch, settle, describe again. Retries happen only before
    * dispatch; after it, a failure says the event was sent.
    */
-  async #act(verb, ref, needs, dispatch, actions = []) {
+  async #act(verb, ref, needs, dispatch, actions = [], expect, forcedConsequential = false) {
     let target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
     let actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     const verdict = await this.#gate(verb, ref, target, actions);
@@ -39083,13 +39513,19 @@ var PageTools = class {
       target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
       actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     }
+    target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+    actionable = await waitActionable(this.session, target, needs, this.observer.probes);
     const before = await this.#describe();
     return this.#dispatchAndReport(
       `${verb} [${ref}] ${target.record.role} "${target.record.name}"`,
       before,
       [target.frame.frameId],
       (dialog) => dispatch(target, actionable, dialog),
-      target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : ""
+      target.record.proxy === "label" ? ` (\u043A\u043B\u0438\u043A \u043F\u043E \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u043E\u0439 \u043F\u043E\u0434\u043F\u0438\u0441\u0438 "${target.record.name}")` : "",
+      verb,
+      ref,
+      expect,
+      forcedConsequential || verdict === "asked"
     );
   }
   /** Classifies the action and asks the gate. 'go' when nothing needed asking. */
@@ -39118,7 +39554,16 @@ var PageTools = class {
     if (answer.decision === "user-did-it") return "user-did-it";
     throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B: ${verb} \xAB${target.record.name}\xBB (${CATEGORY_TEXT[category]}). \u0421\u043E\u0431\u044B\u0442\u0438\u0435 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E; \u043D\u0435 \u043F\u044B\u0442\u0430\u0439\u0442\u0435\u0441\u044C \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u044D\u0442\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u043C.`);
   }
-  async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "") {
+  /** Gates an action whose side effects cannot be inferred from an element label. */
+  async #gateCategory(verb, category) {
+    if (!this.gate) return "go";
+    const url2 = this.session.frames.main().url;
+    const answer = await this.gate.check({ action: verb, ref: "", role: "", name: verb, category, site: siteOf(url2), url: url2 });
+    if (answer.decision === "allow") return "asked";
+    if (answer.decision === "user-did-it") return "user-did-it";
+    throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B: ${verb} (${CATEGORY_TEXT[category]}). \u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E.`);
+  }
+  async #dispatchAndReport(what, before, frameIds, dispatch, suffix = "", action = what.split(" ", 1)[0], targetRef, expect, consequential = false) {
     const watch = await startWatch(this.session, this.observer.probes, frameIds);
     const dialog = watchDialog(this.session);
     let note = "";
@@ -39138,79 +39583,161 @@ var PageTools = class {
       effect = await this.#effectText(evidence, before);
     } catch (error62) {
       if (!(error62 instanceof PageError && error62.code === "DIALOG_OPEN") || !this.dialog) throw error62;
-      effect = `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+      effect = {
+        text: `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${this.dialog.type}: \xAB${this.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`,
+        verdict: "changed",
+        signals: ["dialog"],
+        changed: "diff"
+      };
     }
-    return `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${effect}`;
+    if (effect.verdict !== "none") this.#revision++;
+    const postcondition = await this.#checkExpectation(expect, targetRef);
+    const receipt = {
+      action,
+      target: targetRef,
+      dispatched: true,
+      consequential,
+      effect: { verdict: effect.verdict, signals: effect.signals },
+      postcondition,
+      page: { revision: this.#revision, url: this.session.frames.main().url, changed: effect.changed }
+    };
+    const body = `${what}${suffix}: \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E${note ? ` \xB7 ${note}` : ""} \xB7 \u0440\u0435\u0430\u043A\u0446\u0438\u044F: ${effect.text}`;
+    return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details ?? "\u0443\u0441\u043B\u043E\u0432\u0438\u0435 \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u043E"}. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 \u043D\u043E\u0432\u044B\u0439 snapshot; \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0439\u0442\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0432\u0441\u043B\u0435\u043F\u0443\u044E.` } } : { body, receipt };
   }
   async #effectText(e, before) {
     const counts = `\u043C\u0443\u0442\u0430\u0446\u0438\u0439 ${e.mutations}, \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 ${e.requests}`;
     if (e.effect === "dialog") {
       this.dialog = e.dialog;
-      return `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${e.dialog.type}: \xAB${e.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`;
+      return { text: `\u043E\u0442\u043A\u0440\u044B\u0442 \u0434\u0438\u0430\u043B\u043E\u0433 ${e.dialog.type}: \xAB${e.dialog.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 handle_dialog.`, verdict: "changed", signals: ["dialog"], changed: "diff" };
     }
-    if (e.effect === "new_tab") return `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u043E\u0432\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${e.url ?? ""}`.trim();
+    if (e.effect === "new_tab") return { text: `\u043E\u0442\u043A\u0440\u044B\u0442\u0430 \u043D\u043E\u0432\u0430\u044F \u0432\u043A\u043B\u0430\u0434\u043A\u0430 ${e.url ?? ""}`.trim(), verdict: "changed", signals: ["new_tab"], changed: "full" };
     if (e.effect === "navigated") {
       const o = await this.observer.snapshot({ budget: this.budget });
-      return `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.url ?? o.capture.url}
+      return {
+        text: `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.url ?? o.capture.url}
 \u043D\u043E\u0432\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430: ${o.header}
-\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`;
+\u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B.`,
+        verdict: "changed",
+        signals: ["navigation"],
+        changed: "full"
+      };
     }
     const diff = renderDiff(diffLines(before, await this.#describe()));
     let head = e.effect === "changed" ? `\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0430\u0441\u044C (${counts})` : e.effect === "requests" ? `\u0443\u0448\u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u044B (${e.requests}), \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u043A\u043E\u043B\u043E \u044D\u043A\u0440\u0430\u043D\u0430 \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C` : "\u0432\u0438\u0434\u0438\u043C\u043E\u0439 \u0440\u0435\u0430\u043A\u0446\u0438\u0438 \u043D\u0435\u0442";
     if (e.sameDocument) head = `\u0430\u0434\u0440\u0435\u0441 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u0441\u044F \u043D\u0430 ${e.sameDocument} (\u0431\u0435\u0437 \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438) \xB7 ${head}`;
     if (e.notCommitted) head = `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043D\u0430 ${e.notCommitted} \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D, \u043D\u043E \u043D\u0435 \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u0451\u043B (\u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0430 \u0444\u0430\u0439\u043B\u0430, \u043F\u0443\u0441\u0442\u043E\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438\u043B\u0438 \u043E\u0442\u043C\u0435\u043D\u0430) \xB7 ${head}`;
-    return diff ? `${head}
+    const signals = [e.sameDocument ? "same_document_navigation" : "", diff ? "visible_diff" : "", e.mutations ? "mutations" : "", e.requests ? "network" : "", e.notCommitted ? "navigation_not_committed" : ""].filter(Boolean);
+    const verdict = e.sameDocument || diff ? "changed" : e.effect === "none" ? "none" : "unattributable";
+    return { text: diff ? `${head}
 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F:
-${diff}` : head;
+${diff}` : head, verdict, signals, changed: diff || e.sameDocument ? "diff" : "none" };
+  }
+  async #checkExpectation(expect, actionRef) {
+    if (!expect || Object.values(expect).every((v) => v === void 0)) return { verdict: "not_checked" };
+    const failed = [];
+    const url2 = this.session.frames.main().url;
+    if (expect.url !== void 0 && !url2.includes(expect.url)) failed.push(`URL \u043D\u0435 \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u0442 \xAB${expect.url}\xBB`);
+    if (expect.text !== void 0 || expect.textGone !== void 0) {
+      const { roots } = await this.observer.quick();
+      const page = fold3(flat(roots).map((n) => `${n.name} ${n.value ?? ""}`).join(" "));
+      if (expect.text !== void 0 && !page.includes(fold3(expect.text))) failed.push(`\u0442\u0435\u043A\u0441\u0442 \xAB${expect.text}\xBB \u043D\u0435 \u043F\u043E\u044F\u0432\u0438\u043B\u0441\u044F`);
+      if (expect.textGone !== void 0 && page.includes(fold3(expect.textGone))) failed.push(`\u0442\u0435\u043A\u0441\u0442 \xAB${expect.textGone}\xBB \u043D\u0435 \u0438\u0441\u0447\u0435\u0437`);
+    }
+    const ref = expect.ref ?? actionRef;
+    if (expect.gone !== void 0 || expect.value !== void 0 || expect.checked !== void 0) {
+      if (!ref) failed.push("\u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \u043D\u0435 \u0443\u043A\u0430\u0437\u0430\u043D ref");
+      else {
+        let target = null;
+        try {
+          target = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
+        } catch (error62) {
+          if (!(expect.gone === true && error62 instanceof PageError && error62.code === "REF_STALE")) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D`);
+        }
+        if (expect.gone === true && target) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043D\u0435 \u0438\u0441\u0447\u0435\u0437`);
+        if (expect.gone === false && !target) failed.push(`\u044D\u043B\u0435\u043C\u0435\u043D\u0442 ${ref} \u043E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442`);
+        if (target && expect.value !== void 0) {
+          const value = await callOn(
+            this.session,
+            target.frame,
+            target.objectId,
+            'function () { const c = this.control || this; return typeof c.value === "string" ? c.value : (c.innerText || ""); }'
+          );
+          if (value.replace(/\s+/g, " ").trim() !== expect.value.replace(/\s+/g, " ").trim()) failed.push(`\u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B\u043E`);
+        }
+        if (target && expect.checked !== void 0 && await isChecked(this.session, target) !== expect.checked) failed.push(`\u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 checked \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B\u043E`);
+      }
+    }
+    return failed.length ? { verdict: "unmet", details: failed.join("; ") } : { verdict: "met" };
+  }
+  async #refOf(args) {
+    if (args.ref && args.target) throw new PageError("AMBIGUOUS_TARGET", "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u043B\u0438\u0431\u043E ref, \u043B\u0438\u0431\u043E semantic target, \u043D\u043E \u043D\u0435 \u043E\u0431\u0430 \u0441\u0440\u0430\u0437\u0443.");
+    if (args.ref) return args.ref;
+    if (args.target) return this.observer.semanticRef(args.target);
+    throw new PageError("NOT_FOUND", "\u0423\u043A\u0430\u0436\u0438\u0442\u0435 ref \u0438\u0437 snapshot \u0438\u043B\u0438 \u0442\u043E\u0447\u043D\u0443\u044E semantic target: role \u0438 name.");
   }
   click(args) {
-    return this.run(() => this.#act("click", args.ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog), ["activate"]));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("click", ref, { pointer: true }, (_t, a, dialog) => click(this.session, a.point, dialog), ["activate"], args.expect);
+    });
   }
   hover(args) {
-    return this.run(() => this.#act("hover", args.ref, { pointer: true }, async (_t, a) => {
-      await hover(this.session, a.point);
-    }));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("hover", ref, { pointer: true }, async (_t, a) => {
+        await hover(this.session, a.point);
+      }, [], args.expect);
+    });
   }
   type(args) {
-    return this.run(() => this.#act("type", args.ref, { pointer: false, editable: true }, async (t, a, dialog) => {
-      await focusTarget(this.session, t, a.point, dialog);
-      await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
-      if (args.submit) {
-        const r = await pressKey(this.session, "Enter", dialog);
-        if (r.dialog) return r;
-      }
-      return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
-    }, args.submit ? ["type", "enter"] : ["type"]));
+    return this.run(async () => {
+      const ref = await this.#refOf(args);
+      return this.#act("type", ref, { pointer: false, editable: true }, async (t, a, dialog) => {
+        await focusTarget(this.session, t, a.point, dialog);
+        await typeInto(this.session, t, args.text, Boolean(args.clear), dialog);
+        if (args.submit) {
+          const r = await pressKey(this.session, "Enter", dialog);
+          if (r.dialog) return r;
+        }
+        return { note: `\u0432\u0432\u0435\u0434\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${args.text.length}${args.submit ? ", \u043D\u0430\u0436\u0430\u0442 Enter" : ""}` };
+      }, args.submit ? ["type", "enter"] : ["type"], args.expect);
+    });
   }
   set(args) {
     return this.run(async () => {
-      const probe = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      const ref = await this.#refOf(args);
+      const probe = await resolveTarget(this.session, this.refs, ref, this.observer.probes);
       if (await isSelect(this.session, probe)) {
-        return this.#act("set", args.ref, { pointer: false }, async (t) => ({ note: `\u0432\u044B\u0431\u0440\u0430\u043D\u043E \xAB${await selectOption(this.session, t, String(args.value))}\xBB` }));
+        const verdict = await this.#gateCategory("\u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435 \u0441\u043F\u0438\u0441\u043A\u0430", "submit");
+        if (verdict === "user-did-it") return `set [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C`;
+        return this.#act("set", ref, { pointer: false }, async (t) => ({ note: `\u0432\u044B\u0431\u0440\u0430\u043D\u043E \xAB${await selectOption(this.session, t, String(args.value))}\xBB` }), [], args.expect, verdict === "asked");
       }
       const want = args.value === true || args.value === "true" || args.value === "on";
-      return this.#act("set", args.ref, { pointer: true }, async (t, a, dialog) => {
+      return this.#act("set", ref, { pointer: true }, async (t, a, dialog) => {
         if (await isChecked(this.session, t) === want) return { note: `\u0443\u0436\u0435 ${want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E"}` };
         const r = await click(this.session, a.point, dialog);
         if (r.dialog) return r;
-        if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${args.ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
+        if (await isChecked(this.session, t) !== want) throw new PageError("VALUE_MISMATCH", `\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 ${ref} \u043D\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u043B\u0435 \u043A\u043B\u0438\u043A\u0430.`, true);
         return { note: want ? "\u0432\u043A\u043B\u044E\u0447\u0435\u043D\u043E" : "\u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E" };
-      }, ["activate"]);
+      }, ["activate"], args.expect);
     });
   }
   press(args) {
     return this.run(async () => {
       if (!(args.key in KEYS)) throw new PageError("NOT_FOUND", `\u041A\u043B\u0430\u0432\u0438\u0448\u0430 ${args.key} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F. \u0415\u0441\u0442\u044C: ${Object.keys(KEYS).join(", ")}.`);
-      if (!args.ref && (args.key === "Enter" || args.key === "Space")) {
+      const chosenRef = args.ref || args.target ? await this.#refOf(args) : void 0;
+      let consequential = false;
+      if (!chosenRef && (args.key === "Enter" || args.key === "Space")) {
         throw new PageError("NOT_FOUND", `\u0414\u043B\u044F ${args.key} \u0443\u043A\u0430\u0436\u0438\u0442\u0435 ref \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430: \u0442\u0430\u043A \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442\u0441\u044F.`);
       }
-      if (args.ref) {
-        let target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+      if (chosenRef) {
+        let target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         if (args.key === "Enter" || args.key === "Space") {
           const control = ["button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "clickable"].includes(target.record.role);
-          const verdict = await this.#gate(`press ${args.key}`, args.ref, target, [control ? "activate" : "enter"]);
-          if (verdict === "user-did-it") return `press ${args.key} [${args.ref}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
-          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, args.ref, this.observer.probes);
+          const verdict = await this.#gate(`press ${args.key}`, chosenRef, target, [control ? "activate" : "enter"]);
+          consequential = verdict === "asked";
+          if (verdict === "user-did-it") return `press ${args.key} [${chosenRef}]: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C, \u0441\u043E\u0431\u044B\u0442\u0438\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E`;
+          if (verdict === "asked") target = await resolveTarget(this.session, this.refs, chosenRef, this.observer.probes);
         }
         await waitActionable(this.session, target, { pointer: false }, this.observer.probes);
         await this.session.cdp.send("DOM.focus", { backendNodeId: target.record.backendNodeId }, target.frame.sessionId).catch(() => {
@@ -39220,13 +39747,18 @@ ${diff}` : head;
         }
         const before = await this.#describe();
         return this.#dispatchAndReport(
-          `press ${args.key} [${args.ref}] ${target.record.role} "${target.record.name}"`,
+          `press ${args.key} [${chosenRef}] ${target.record.role} "${target.record.name}"`,
           before,
           [target.frame.frameId],
-          (dialog) => pressKey(this.session, args.key, dialog)
+          (dialog) => pressKey(this.session, args.key, dialog),
+          "",
+          `press ${args.key}`,
+          chosenRef,
+          args.expect,
+          consequential
         );
       }
-      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog));
+      return this.#dispatchAndReport(`press ${args.key}`, await this.#describe(), [], (dialog) => pressKey(this.session, args.key, dialog), "", `press ${args.key}`, void 0, args.expect);
     });
   }
   scroll(args) {
@@ -39251,6 +39783,7 @@ ${diff}` : head;
       const { cdp } = this.session;
       let what;
       let status;
+      let consequential = false;
       const mainId = this.session.frames.main().frameId;
       let done3;
       const arrived = new Promise((r) => {
@@ -39274,6 +39807,9 @@ ${diff}` : head;
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
           restored();
         } else if (args.action === "reload") {
+          const verdict = await this.#gateCategory("\u043E\u0431\u043D\u043E\u0432\u0438\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443", "submit");
+          if (verdict === "user-did-it") return "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435: \u0448\u0430\u0433 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C \u0441\u0430\u043C";
+          consequential = verdict === "asked";
           what = "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435";
           await cdp.send("Page.reload", {});
           await Promise.race([arrived, new Promise((r) => setTimeout(r, NAVIGATION_TIMEOUT_MS))]);
@@ -39289,8 +39825,19 @@ ${diff}` : head;
         off();
       }
       const o = await this.observer.snapshot({ budget: this.budget });
-      return `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt = {
+        action: "navigate",
+        dispatched: true,
+        consequential,
+        effect: { verdict: "changed", signals: ["navigation"] },
+        postcondition,
+        page: { revision: this.#revision, url: this.session.frames.main().url, changed: "full" }
+      };
+      const body = `${what}: ${status ? `HTTP ${status} \xB7 ` : ""}${o.header}
 \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot, \u0447\u0442\u043E\u0431\u044B \u0443\u0432\u0438\u0434\u0435\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B.`;
+      return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details}.` } } : { body, receipt };
     }, false, true);
   }
   wait(args) {
@@ -39493,6 +40040,7 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
     return this.run(async () => {
       if (!this.dialog) throw new PageError("NOT_FOUND", "\u0421\u0435\u0439\u0447\u0430\u0441 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043D\u0435\u0442 \u0434\u0438\u0430\u043B\u043E\u0433\u0430.");
       const was = this.dialog;
+      let consequential = false;
       if (was.type === "prompt" && this.gate) {
         const url2 = this.session.frames.main().url;
         const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category: "secret", site: siteOf(url2), url: url2 });
@@ -39512,12 +40060,24 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
           const answer = await this.gate.check({ action: "handle_dialog", ref: "", role: "dialog", name: was.message, category, site: siteOf(url2), url: url2 });
           if (answer.decision === "user-did-it") return `\u0434\u0438\u0430\u043B\u043E\u0433 \xAB${was.message}\xBB: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0430\u043C`;
           if (answer.decision !== "allow") throw new PageError("USER_DECLINED", `\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \xAB${was.message}\xBB. \u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435 \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u043E\u0442\u043C\u0435\u043D\u043E\u0439 (accept=false).`);
+          consequential = true;
         }
       }
       await this.session.cdp.send("Page.handleJavaScriptDialog", { accept: args.accept, promptText: args.text });
       this.dialog = void 0;
       await new Promise((r) => setTimeout(r, 300));
-      return `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
+      this.#revision++;
+      const postcondition = await this.#checkExpectation(args.expect);
+      const receipt = {
+        action: "handle_dialog",
+        dispatched: true,
+        consequential,
+        effect: { verdict: args.accept ? "unattributable" : "changed", signals: ["dialog_closed"] },
+        postcondition,
+        page: { revision: this.#revision, url: this.session.frames.main().url, changed: "diff" }
+      };
+      const body = `\u0434\u0438\u0430\u043B\u043E\u0433 ${was.type} \xAB${was.message}\xBB: ${args.accept ? "\u043F\u0440\u0438\u043D\u044F\u0442" : "\u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D"}`;
+      return postcondition.verdict === "unmet" ? { body, receipt, error: { code: "POSTCONDITION_UNMET", message: `\u0414\u0438\u0430\u043B\u043E\u0433 \u0437\u0430\u043A\u0440\u044B\u0442, \u043D\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u0434\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442: ${postcondition.details}.` } } : { body, receipt };
     }, true, true);
   }
   /** For the e2e harness: runs the checks before an action on a label, without acting. */
@@ -39532,6 +40092,9 @@ ${overlaps.map(([a, b]) => `- \xAB${controls[Number(a)].label}\xBB \u0438 \xAB${
     }
   }
   dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    for (const off of this.#offs.splice(0)) off();
     this.observer.network.stop();
   }
 };
@@ -39542,6 +40105,7 @@ var TOOL_LINES = {
   snapshot: "snapshot \u2014 \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0441 \u043C\u0435\u0442\u043A\u0430\u043C\u0438 [a12] \u0438 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043A\u0438",
   find: "find \u2014 \u043D\u0430\u0439\u0442\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u043F\u043E \u0440\u043E\u043B\u0438, \u0438\u043C\u0435\u043D\u0438 \u0438\u043B\u0438 \u0442\u0435\u043A\u0441\u0442\u0443",
   read: "read \u2014 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0438\u043B\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430",
+  locator: "locator \u2014 \u043F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u043E\u0434\u0438\u043D \u043B\u043E\u043A\u0430\u0442\u043E\u0440 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u043D\u043E\u0433\u043E \u0442\u0438\u043F\u0430 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0435\u0433\u043E \u0447\u0435\u0440\u0435\u0437 CDP/DevTools",
   notes_search: "notes_search \u2014 \u043D\u0430\u0439\u0442\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F",
   notes_read: "notes_read \u2014 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F",
   console_log: "console_log \u2014 \u043E\u0448\u0438\u0431\u043A\u0438 \u043A\u043E\u043D\u0441\u043E\u043B\u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B",
@@ -39560,7 +40124,7 @@ function systemPrompt(profile, tools = []) {
 
 ${tools.map((t) => `- ${TOOL_LINES[t] ?? t}`).join("\n")}
 
-\u0412\u043E\u043F\u0440\u043E\u0441 \u043E \u0442\u043E\u043C, \u0447\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0442\u043E \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435, \u2014 \u043F\u043E\u0432\u043E\u0434 \u043F\u043E\u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u043E\u043C, \u0430 \u043D\u0435 \u0433\u0430\u0434\u0430\u0442\u044C. \u0422\u044B \u0432 \u0440\u0435\u0436\u0438\u043C\u0435 \xAB\u0427\u0430\u0442\xBB: \u0437\u0434\u0435\u0441\u044C \u0442\u044B \u0447\u0438\u0442\u0430\u0435\u0448\u044C \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0438 \u043C\u043E\u0436\u0435\u0448\u044C \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0438\u0432\u0430\u0442\u044C \u043D\u0430 \u043D\u0435\u0439, \u0435\u0441\u043B\u0438 \u0435\u0441\u0442\u044C highlight. \u041F\u0440\u043E\u043A\u0440\u0443\u0442\u0438\u0442\u044C, \u043D\u0430\u0436\u0430\u0442\u044C, \u0432\u0432\u0435\u0441\u0442\u0438 \u0438\u043B\u0438 \u043F\u0435\u0440\u0435\u0439\u0442\u0438 \u043C\u043E\u0436\u0435\u0442 \u0440\u0435\u0436\u0438\u043C \xAB\u0410\u0433\u0435\u043D\u0442\xBB; \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0430\u0435\u0442 \u0435\u0433\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0432 \u043F\u043E\u043B\u0435 \u0440\u0435\u0436\u0438\u043C\u0430 \u043F\u043E\u0434 \u0441\u0442\u0440\u043E\u043A\u043E\u0439 \u0432\u0432\u043E\u0434\u0430, \u0441\u0430\u043C \u0442\u044B \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043D\u0435 \u043C\u043E\u0436\u0435\u0448\u044C. \u0415\u0441\u043B\u0438 \u043E\u0442\u0432\u0435\u0442 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u043D\u0443\u0436\u043D\u043E\u0435 \u043D\u0438\u0436\u0435 \u043F\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u0438\u043B\u0438 \u043F\u043E\u0434\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0440\u043E\u043A\u0440\u0443\u0442\u043A\u0435), \u0441\u043A\u0430\u0436\u0438, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B, \u0438 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E \u0432\u044B\u0431\u0440\u0430\u0442\u044C \xAB\u0410\u0433\u0435\u043D\u0442\xBB \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u043F\u0440\u043E\u0441\u044C\u0431\u0443. \u041D\u0438\u043A\u043E\u0433\u0434\u0430 \u043D\u0435 \u043F\u0438\u0448\u0438, \u0447\u0442\u043E \u0441\u0434\u0435\u043B\u0430\u043B \u0447\u0442\u043E-\u0442\u043E \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435, \u0435\u0441\u043B\u0438 \u043D\u0435 \u0432\u044B\u0437\u044B\u0432\u0430\u043B \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0432 \u044D\u0442\u043E\u043C \u043E\u0442\u0432\u0435\u0442\u0435 \u0438 \u043D\u0435 \u043F\u043E\u043B\u0443\u0447\u0438\u043B \u0443\u0441\u043F\u0435\u0448\u043D\u044B\u0439 \u043E\u0442\u0432\u0435\u0442. \u041D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E \u043C\u0435\u0442\u043A\u0438 \u0432\u0438\u0434\u0430 [a12]: \u043E\u043D\u0438 \u043D\u0443\u0436\u043D\u044B \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u0435\u0431\u0435, \u043D\u0430\u0437\u044B\u0432\u0430\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0438\u0445 \u043F\u043E\u0434\u043F\u0438\u0441\u044F\u043C\u0438.`);
+\u0412\u043E\u043F\u0440\u043E\u0441 \u043E \u0442\u043E\u043C, \u0447\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0442\u043E \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435, \u2014 \u043F\u043E\u0432\u043E\u0434 \u043F\u043E\u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u043E\u043C, \u0430 \u043D\u0435 \u0433\u0430\u0434\u0430\u0442\u044C. \u0422\u044B \u0432 \u0440\u0435\u0436\u0438\u043C\u0435 \xAB\u0427\u0430\u0442\xBB: \u0437\u0434\u0435\u0441\u044C \u0442\u044B \u0447\u0438\u0442\u0430\u0435\u0448\u044C \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0438 \u043C\u043E\u0436\u0435\u0448\u044C \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0438\u0432\u0430\u0442\u044C \u043D\u0430 \u043D\u0435\u0439, \u0435\u0441\u043B\u0438 \u0435\u0441\u0442\u044C highlight. \u041F\u0440\u043E\u043A\u0440\u0443\u0442\u0438\u0442\u044C, \u043D\u0430\u0436\u0430\u0442\u044C, \u0432\u0432\u0435\u0441\u0442\u0438 \u0438\u043B\u0438 \u043F\u0435\u0440\u0435\u0439\u0442\u0438 \u043C\u043E\u0436\u0435\u0442 \u0440\u0435\u0436\u0438\u043C \xAB\u0410\u0433\u0435\u043D\u0442\xBB; \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0430\u0435\u0442 \u0435\u0433\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0432 \u043F\u043E\u043B\u0435 \u0440\u0435\u0436\u0438\u043C\u0430 \u043F\u043E\u0434 \u0441\u0442\u0440\u043E\u043A\u043E\u0439 \u0432\u0432\u043E\u0434\u0430, \u0441\u0430\u043C \u0442\u044B \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043D\u0435 \u043C\u043E\u0436\u0435\u0448\u044C. \u0415\u0441\u043B\u0438 \u043E\u0442\u0432\u0435\u0442 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u043D\u0443\u0436\u043D\u043E\u0435 \u043D\u0438\u0436\u0435 \u043F\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u0438\u043B\u0438 \u043F\u043E\u0434\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0440\u043E\u043A\u0440\u0443\u0442\u043A\u0435), \u0441\u043A\u0430\u0436\u0438, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B, \u0438 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E \u0432\u044B\u0431\u0440\u0430\u0442\u044C \xAB\u0410\u0433\u0435\u043D\u0442\xBB \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u043F\u0440\u043E\u0441\u044C\u0431\u0443. \u041D\u0438\u043A\u043E\u0433\u0434\u0430 \u043D\u0435 \u043F\u0438\u0448\u0438, \u0447\u0442\u043E \u0441\u0434\u0435\u043B\u0430\u043B \u0447\u0442\u043E-\u0442\u043E \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435, \u0435\u0441\u043B\u0438 \u043D\u0435 \u0432\u044B\u0437\u044B\u0432\u0430\u043B \u0434\u043B\u044F \u044D\u0442\u043E\u0433\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0432 \u044D\u0442\u043E\u043C \u043E\u0442\u0432\u0435\u0442\u0435 \u0438 \u043D\u0435 \u043F\u043E\u043B\u0443\u0447\u0438\u043B \u0443\u0441\u043F\u0435\u0448\u043D\u044B\u0439 \u043E\u0442\u0432\u0435\u0442. \u0415\u0441\u043B\u0438 \u043F\u0440\u043E\u0441\u044F\u0442 XPath, CSS, ID, Test ID, ARIA, Name, Class, Tag, Role \u0438\u043B\u0438 \u043B\u043E\u043A\u0430\u0442\u043E\u0440, \u043D\u0430\u0439\u0434\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 \u0438 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u043C \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435\u043C \u0432\u044B\u0437\u043E\u0432\u0438 locator \u0441 \u0435\u0433\u043E \u0441\u0432\u0435\u0436\u0438\u043C ref \u0438 \u0442\u043E\u0447\u043D\u043E \u044D\u0442\u0438\u043C kind. \u041F\u043E\u0441\u043B\u0435 click/hover/type/set/press/navigate locator \u0443\u0441\u0442\u0430\u0440\u0435\u0432\u0430\u0435\u0442: \u0441\u043D\u043E\u0432\u0430 \u0441\u0434\u0435\u043B\u0430\u0439 snapshot \u0438 locator. \u041D\u0435 \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0439 \u0432\u0442\u043E\u0440\u043E\u0439 \u0442\u0438\u043F \u0438\u043B\u0438 \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0435 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B: \u0438\u0442\u043E\u0433\u043E\u0432\u044B\u0439 \u043E\u0442\u0432\u0435\u0442 \u0444\u043E\u0440\u043C\u0438\u0440\u0443\u0435\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u0438\u0437 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0433\u043E \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 locator. \u041D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E \u043C\u0435\u0442\u043A\u0438 \u0432\u0438\u0434\u0430 [a12]: \u043E\u043D\u0438 \u043D\u0443\u0436\u043D\u044B \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u0435\u0431\u0435, \u043D\u0430\u0437\u044B\u0432\u0430\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0438\u0445 \u043F\u043E\u0434\u043F\u0438\u0441\u044F\u043C\u0438.`);
     parts.push(`${PAGE_CONTRACT} ${NOTES_CONTRACT}`);
   } else {
     parts.push("\u0421\u0435\u0439\u0447\u0430\u0441 \u0443 \u0442\u0435\u0431\u044F \u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043A \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430\u043C \u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0430\u043C. \u0415\u0441\u043B\u0438 \u043F\u0440\u043E\u0441\u044F\u0442 \u0447\u0442\u043E-\u0442\u043E \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u2014 \u0441\u043A\u0430\u0436\u0438, \u0447\u0442\u043E \u043F\u043E\u043A\u0430 \u044D\u0442\u043E\u0433\u043E \u043D\u0435 \u0443\u043C\u0435\u0435\u0448\u044C.");
@@ -39583,6 +40147,7 @@ var AGENT_RULES = `## \u041A\u0430\u043A \u0440\u0430\u0431\u043E\u0442\u0430\u0
 - \u0417\u0430\u043A\u043E\u043D\u0447\u0438 \u0432\u044B\u0437\u043E\u0432\u043E\u043C done \u0441 \u0447\u0435\u0441\u0442\u043D\u044B\u043C \u0438\u0442\u043E\u0433\u043E\u043C: success \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0441\u043B\u0438 \u0442\u044B \u0432\u0438\u0434\u0435\u043B \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F; \u0438\u043D\u0430\u0447\u0435 partial \u0438\u043B\u0438 failed. Summary \u2014 \u043E\u0442\u0432\u0435\u0442 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E.
 - \u041E\u0442\u0432\u0435\u0442 \u0431\u0435\u0437 \u0432\u044B\u0437\u043E\u0432\u0430 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430 \u0437\u0430\u043A\u0430\u043D\u0447\u0438\u0432\u0430\u0435\u0442 \u0437\u0430\u0434\u0430\u0447\u0443: \u043D\u0435 \u043F\u0438\u0448\u0438 \xAB\u0441\u0435\u0439\u0447\u0430\u0441 \u0441\u0434\u0435\u043B\u0430\u044E\xBB \u2014 \u0434\u0435\u043B\u0430\u0439.
 - \u041D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E \u043C\u0435\u0442\u043A\u0438 \u0432\u0438\u0434\u0430 [a12]: \u043D\u0430\u0437\u044B\u0432\u0430\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B \u0438\u0445 \u043F\u043E\u0434\u043F\u0438\u0441\u044F\u043C\u0438.
+- \u0415\u0441\u043B\u0438 \u043F\u0440\u043E\u0441\u044F\u0442 XPath, CSS, ID, Test ID, ARIA, Name, Class, Tag, Role \u0438\u043B\u0438 \u043B\u043E\u043A\u0430\u0442\u043E\u0440, \u043D\u0430\u0439\u0434\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 \u0438 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u043C \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435\u043C \u0432\u044B\u0437\u043E\u0432\u0438 locator \u0441\u043E \u0441\u0432\u0435\u0436\u0438\u043C ref \u0438 \u0442\u043E\u0447\u043D\u043E \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u043D\u044B\u043C kind. \u041F\u043E\u0441\u043B\u0435 \u043B\u044E\u0431\u043E\u0433\u043E click/hover/type/set/press/navigate \u0441\u043D\u043E\u0432\u0430 \u0441\u0434\u0435\u043B\u0430\u0439 snapshot \u0438 locator. \u041D\u0435 \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0439 \u0434\u0440\u0443\u0433\u043E\u0439 \u0442\u0438\u043F \u0438\u043B\u0438 \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0435 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B: \u0438\u0442\u043E\u0433 \u0444\u043E\u0440\u043C\u0438\u0440\u0443\u0435\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u0438\u0437 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0433\u043E \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430.
 
 ## \u0427\u0442\u043E \u0440\u0435\u0448\u0430\u0435\u0442 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C
 
@@ -39612,6 +40177,7 @@ function shownSteps(steps) {
 }
 function resultOf(s) {
   if (s.status === "running" || s.summary === UNFINISHED) return UNFINISHED;
+  if (s.status === "uncertain") return s.summary || "\u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D; \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435";
   return s.summary || (s.status === "error" ? "\u043E\u0448\u0438\u0431\u043A\u0430" : "\u0433\u043E\u0442\u043E\u0432\u043E");
 }
 function replyMessages(m, out) {
@@ -39713,7 +40279,7 @@ async function modelCapabilities(baseUrl, model, fetchFn = fetch) {
 }
 
 // src/agent/tools.ts
-var CHAT_TOOLS = ["snapshot", "find", "read", "notes_search", "notes_read", "console_log", "network_log", "page_checks", "highlight", "clear_highlights"];
+var CHAT_TOOLS = ["snapshot", "find", "read", "locator", "notes_search", "notes_read", "console_log", "network_log", "page_checks", "highlight", "clear_highlights"];
 var NOT_YET = [];
 var text2 = async (fn) => {
   try {
@@ -39723,6 +40289,7 @@ var text2 = async (fn) => {
   }
 };
 function readTools(enabled, page, notes, images = {}) {
+  if (enabled.has("read")) enabled.add("locator");
   const tools = {};
   if (enabled.has("screenshot") && images.vision && images.screenshots) {
     const store = images.screenshots;
@@ -39789,9 +40356,17 @@ function readTools(enabled, page, notes, images = {}) {
     execute: async () => draw("clearHighlights")
   });
   if (enabled.has("read")) tools.read = tool({
-    description: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0432 Markdown, \u0446\u0435\u043B\u0438\u043A\u043E\u043C \u0438\u043B\u0438 \u0432\u043D\u0443\u0442\u0440\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \u0441 \u043C\u0435\u0442\u043A\u043E\u0439 ref.",
+    description: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u0432 Markdown. \u0414\u043B\u044F CSS/XPath \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0439 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0439 locator.",
     inputSchema: external_exports.object({ ref: external_exports.string().optional() }),
     execute: async (input2) => (await (await page()).read(input2)).text
+  });
+  if (enabled.has("locator")) tools.locator = tool({
+    description: "\u041F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u0440\u043E\u0432\u043D\u043E \u043E\u0434\u0438\u043D \u043B\u043E\u043A\u0430\u0442\u043E\u0440 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u043D\u043E\u0433\u043E \u0442\u0438\u043F\u0430 \u0434\u043B\u044F ref. \u041E\u043D \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u0438 \u043E\u0434\u043D\u043E\u043C \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0438 \u0441 \u0442\u0435\u043C \u0436\u0435 DOM-\u0443\u0437\u043B\u043E\u043C \u0447\u0435\u0440\u0435\u0437 CDP/DevTools. \u041D\u0435 \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0439 \u0441\u0432\u043E\u0438 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B.",
+    inputSchema: external_exports.object({ ref: external_exports.string(), kind: external_exports.enum(LOCATOR_KINDS).optional().describe("xpath, css, id, testid, aria, name, class, tag, role \u0438\u043B\u0438 best; \u0434\u043E\u043B\u0436\u0435\u043D \u0441\u043E\u0432\u043F\u0430\u0434\u0430\u0442\u044C \u0441 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u043C \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F") }),
+    execute: async (input2) => {
+      const target = await page();
+      return target.locator ? (await target.locator.call(target, { ...input2, kind: images.locatorKind ?? input2.kind ?? "best" })).text : "\u043E\u0448\u0438\u0431\u043A\u0430: \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u043B\u043E\u043A\u0430\u0442\u043E\u0440\u0430 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430";
+    }
   });
   if (notes && enabled.has("notes_search")) tools.notes_search = tool({
     description: "\u041D\u0430\u0439\u0442\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u0438\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F, \u0442\u0435\u043A\u0441\u0442\u0430 \u0438\u043B\u0438 \u0442\u0435\u0433\u043E\u0432. \u0412\u043E\u0437\u0432\u0440\u0430\u0449\u0430\u0435\u0442 id \u0437\u0430\u043C\u0435\u0442\u043E\u043A.",
@@ -39810,17 +40385,72 @@ function buildChatTools(profile, page, notes, images = {}) {
 }
 function buildAgentTools(profile, ctx) {
   const enabled = /* @__PURE__ */ new Set([...profile.tools.filter((t) => !NOT_YET.includes(t)), "done", "ask_user"]);
-  const tools = readTools(enabled, () => ctx.tabs.current(), ctx.notes, { vision: ctx.vision, screenshots: ctx.screenshots, allowReload: true });
+  const tools = readTools(
+    enabled,
+    () => ctx.tabs.current(),
+    ctx.notes,
+    { vision: ctx.vision, screenshots: ctx.screenshots, allowReload: true, locatorKind: ctx.locatorKind }
+  );
+  let verificationDebt = "";
+  let consecutiveErrors = 0;
+  const recent = [];
+  const noEffect = /* @__PURE__ */ new Map();
+  const actionNames = MUTATING_TOOLS;
+  const verificationNames = /* @__PURE__ */ new Set(["snapshot", "find", "read", "wait"]);
+  const expectation = external_exports.object({
+    url: external_exports.string().optional().describe("\u0447\u0430\u0441\u0442\u044C \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E URL"),
+    text: external_exports.string().optional().describe("\u0442\u0435\u043A\u0441\u0442 \u0434\u043E\u043B\u0436\u0435\u043D \u043F\u043E\u044F\u0432\u0438\u0442\u044C\u0441\u044F"),
+    textGone: external_exports.string().optional().describe("\u0442\u0435\u043A\u0441\u0442 \u0434\u043E\u043B\u0436\u0435\u043D \u0438\u0441\u0447\u0435\u0437\u043D\u0443\u0442\u044C"),
+    ref: external_exports.string().optional().describe("ref \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u043C\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430; \u0431\u0435\u0437 \u043D\u0435\u0433\u043E \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0435\u0442\u0441\u044F \u0446\u0435\u043B\u044C \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F"),
+    gone: external_exports.boolean().optional(),
+    value: external_exports.string().optional(),
+    checked: external_exports.boolean().optional()
+  }).optional().describe("\u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u043C\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F; \u0443\u043A\u0430\u0437\u044B\u0432\u0430\u0439, \u043A\u043E\u0433\u0434\u0430 \u0438\u0442\u043E\u0433 \u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D");
+  const stable = (value) => {
+    if (!value || typeof value !== "object") return JSON.stringify(value);
+    return JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))));
+  };
+  const guard = (name5, args) => {
+    const signature = `${name5}:${stable(args)}`;
+    const matching = recent.slice(-6).filter((r) => r.signature === signature);
+    if (matching.length >= 3 && matching.every((r) => r.outcome === matching[0].outcome)) {
+      return "\u043E\u0448\u0438\u0431\u043A\u0430 LOOP_GUARD: \u043E\u0434\u0438\u043D\u0430\u043A\u043E\u0432\u043E\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0443\u0436\u0435 \u0442\u0440\u0438\u0436\u0434\u044B \u0434\u0430\u043B\u043E \u0442\u043E\u0442 \u0436\u0435 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442. \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 \u043D\u043E\u0432\u044B\u0439 snapshot \u0438 \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u0440\u0443\u0433\u043E\u0439 \u043F\u0443\u0442\u044C.";
+    }
+    const ref2 = args?.ref;
+    if (ref2 && (noEffect.get(`${name5}:${ref2}`) ?? 0) >= 2) {
+      return `\u043E\u0448\u0438\u0431\u043A\u0430 LOOP_GUARD: \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 ${name5} \u0434\u043B\u044F ${ref2} \u0434\u0432\u0430\u0436\u0434\u044B \u043D\u0435 \u0434\u0430\u043B\u043E \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u0435\u043C\u043E\u0433\u043E \u044D\u0444\u0444\u0435\u043A\u0442\u0430. \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot; \u043D\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0439\u0442\u0435 \u0435\u0433\u043E \u0432\u0441\u043B\u0435\u043F\u0443\u044E.`;
+    }
+    if (consecutiveErrors >= 5) return "\u043E\u0448\u0438\u0431\u043A\u0430 LOOP_GUARD: \u043F\u044F\u0442\u044C \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0439 \u043F\u043E\u0434\u0440\u044F\u0434 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u043B\u0438\u0441\u044C \u043E\u0448\u0438\u0431\u043A\u043E\u0439. \u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u0435\u0441\u044C, \u0441\u0434\u0435\u043B\u0430\u0439\u0442\u0435 snapshot \u0438 \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u0435 \u043F\u043B\u0430\u043D.";
+    return null;
+  };
   const page = async (name5, args) => {
-    const target = await ctx.tabs.current();
-    return (await target[name5].call(target, args)).text;
+    const blocked = guard(String(name5), args);
+    if (blocked) return blocked;
+    const target2 = await ctx.tabs.current();
+    const result = await target2[name5].call(target2, args);
+    const signature = `${String(name5)}:${stable(args)}`;
+    const outcome = result.error?.code ?? result.receipt?.effect.verdict ?? (result.ok ? "ok" : "error");
+    recent.push({ signature, outcome });
+    if (recent.length > 12) recent.shift();
+    consecutiveErrors = result.ok ? 0 : consecutiveErrors + 1;
+    const ref2 = args?.ref;
+    if (ref2) {
+      const key = `${String(name5)}:${ref2}`;
+      if (result.receipt?.effect.verdict === "none" || result.receipt?.effect.verdict === "unattributable") noEffect.set(key, (noEffect.get(key) ?? 0) + 1);
+      else if (result.receipt) noEffect.delete(key);
+    }
+    if (result.receipt && (result.receipt.effect.verdict !== "changed" || result.receipt.postcondition.verdict === "unmet" || result.receipt.consequential && result.receipt.postcondition.verdict !== "met")) {
+      verificationDebt = `${name5}: effect=${result.receipt.effect.verdict}, postcondition=${result.receipt.postcondition.verdict}`;
+    } else if (result.receipt?.postcondition.verdict === "met") verificationDebt = "";
+    return result.text;
   };
   const add = (name5, def) => {
     if (enabled.has(name5)) tools[name5] = tool(def);
   };
   const ref = external_exports.string().describe("\u043C\u0435\u0442\u043A\u0430 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430 \u0438\u0437 snapshot, \u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 a12");
-  add("click", { description: "\u041A\u043B\u0438\u043A\u043D\u0443\u0442\u044C \u043F\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0443.", inputSchema: external_exports.object({ ref }), execute: async (a) => page("click", a) });
-  add("hover", { description: "\u041D\u0430\u0432\u0435\u0441\u0442\u0438 \u0443\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C \u043D\u0430 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 (\u043C\u0435\u043D\u044E \u043F\u043E \u043D\u0430\u0432\u0435\u0434\u0435\u043D\u0438\u044E).", inputSchema: external_exports.object({ ref }), execute: async (a) => page("hover", a) });
+  const target = external_exports.object({ role: external_exports.string(), name: external_exports.string(), nth: external_exports.number().int().positive().optional(), within: ref.optional() }).describe("\u0442\u043E\u0447\u043D\u043E\u0435 \u0441\u0435\u043C\u0430\u043D\u0442\u0438\u0447\u0435\u0441\u043A\u043E\u0435 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0435; \u043F\u0440\u0438 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430\u0445 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E within \u0438\u043B\u0438 nth");
+  add("click", { description: "\u041A\u043B\u0438\u043A\u043D\u0443\u0442\u044C \u043F\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0443. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 ref \u043B\u0438\u0431\u043E \u0442\u043E\u0447\u043D\u044B\u0439 target. \u0415\u0441\u043B\u0438 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0439 \u0438\u0442\u043E\u0433 \u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D, \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E \u0443\u043A\u0430\u0436\u0438\u0442\u0435 expect.", inputSchema: external_exports.object({ ref: ref.optional(), target: target.optional(), expect: expectation }), execute: async (a) => page("click", a) });
+  add("hover", { description: "\u041D\u0430\u0432\u0435\u0441\u0442\u0438 \u0443\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C \u043D\u0430 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 (\u043C\u0435\u043D\u044E \u043F\u043E \u043D\u0430\u0432\u0435\u0434\u0435\u043D\u0438\u044E). \u0423\u043A\u0430\u0436\u0438\u0442\u0435 ref \u043B\u0438\u0431\u043E \u0442\u043E\u0447\u043D\u044B\u0439 target.", inputSchema: external_exports.object({ ref: ref.optional(), target: target.optional(), expect: expectation }), execute: async (a) => page("hover", a) });
   add("scroll", {
     description: "\u041F\u0440\u043E\u043A\u0440\u0443\u0442\u0438\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 (\u0438\u043B\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442 ref) \u0432\u043D\u0438\u0437 \u0438\u043B\u0438 \u0432\u0432\u0435\u0440\u0445.",
     inputSchema: external_exports.object({ direction: external_exports.enum(["down", "up"]), amount: external_exports.enum(["page", "half"]).optional(), ref: ref.optional() }),
@@ -39828,17 +40458,17 @@ function buildAgentTools(profile, ctx) {
   });
   add("type", {
     description: "\u0412\u0432\u0435\u0441\u0442\u0438 \u0442\u0435\u043A\u0441\u0442 \u0432 \u043F\u043E\u043B\u0435. clear=true \u0437\u0430\u043C\u0435\u043D\u044F\u0435\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0435 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u0435, submit=true \u043D\u0430\u0436\u0438\u043C\u0430\u0435\u0442 Enter \u043F\u043E\u0441\u043B\u0435 \u0432\u0432\u043E\u0434\u0430.",
-    inputSchema: external_exports.object({ ref, text: external_exports.string(), clear: external_exports.boolean().optional(), submit: external_exports.boolean().optional() }),
+    inputSchema: external_exports.object({ ref: ref.optional(), target: target.optional(), text: external_exports.string(), clear: external_exports.boolean().optional(), submit: external_exports.boolean().optional(), expect: expectation }),
     execute: async (a) => page("type", a)
   });
   add("set", {
     description: "\u0412\u044B\u0431\u0440\u0430\u0442\u044C \u0432\u0430\u0440\u0438\u0430\u043D\u0442 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435 (value \u2014 \u0442\u0435\u043A\u0441\u0442 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u0430) \u0438\u043B\u0438 \u0432\u043A\u043B\u044E\u0447\u0438\u0442\u044C/\u0432\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0444\u043B\u0430\u0436\u043E\u043A (value \u2014 true/false).",
-    inputSchema: external_exports.object({ ref, value: external_exports.union([external_exports.string(), external_exports.boolean()]) }),
+    inputSchema: external_exports.object({ ref: ref.optional(), target: target.optional(), value: external_exports.union([external_exports.string(), external_exports.boolean()]), expect: expectation }),
     execute: async (a) => page("set", a)
   });
   add("press", {
     description: "\u041D\u0430\u0436\u0430\u0442\u044C \u043A\u043B\u0430\u0432\u0438\u0448\u0443: Enter, Tab, Escape, Backspace, ArrowUp/Down/Left/Right, Space, PageDown, PageUp. \u0414\u043B\u044F Enter \u0438 Space \u043D\u0443\u0436\u0435\u043D ref.",
-    inputSchema: external_exports.object({ key: external_exports.string(), ref: ref.optional() }),
+    inputSchema: external_exports.object({ key: external_exports.string(), ref: ref.optional(), target: target.optional(), expect: expectation }),
     execute: async (a) => page("press", a)
   });
   add("wait", {
@@ -39848,12 +40478,12 @@ function buildAgentTools(profile, ctx) {
   });
   add("navigate", {
     description: "\u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043F\u043E \u0430\u0434\u0440\u0435\u0441\u0443 \u0432 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0432\u043A\u043B\u0430\u0434\u043A\u0435, \u0438\u043B\u0438 \u043D\u0430\u0437\u0430\u0434/\u0432\u043F\u0435\u0440\u0451\u0434/\u043E\u0431\u043D\u043E\u0432\u0438\u0442\u044C (action).",
-    inputSchema: external_exports.object({ url: external_exports.string().optional(), action: external_exports.enum(["back", "forward", "reload"]).optional() }),
+    inputSchema: external_exports.object({ url: external_exports.string().optional(), action: external_exports.enum(["back", "forward", "reload"]).optional(), expect: expectation }),
     execute: async (a) => page("navigate", a)
   });
   add("handle_dialog", {
     description: "\u041E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043D\u0430 \u0434\u0438\u0430\u043B\u043E\u0433 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B (alert/confirm): accept=true \u2014 OK, false \u2014 \u041E\u0442\u043C\u0435\u043D\u0430.",
-    inputSchema: external_exports.object({ accept: external_exports.boolean(), text: external_exports.string().optional() }),
+    inputSchema: external_exports.object({ accept: external_exports.boolean(), text: external_exports.string().optional(), expect: expectation }),
     execute: async (a) => page("handleDialog", a)
   });
   add("tabs", {
@@ -39867,29 +40497,60 @@ function buildAgentTools(profile, ctx) {
     execute: async (a) => text2(() => ctx.ask(a))
   });
   add("notes_create", {
-    description: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F (folder \u2014 \u043F\u0443\u0442\u044C \u043F\u0430\u043F\u043A\u0438 \u0432\u0438\u0434\u0430 \xAB\u0420\u0430\u0431\u043E\u0442\u0430/QA\xBB, \u043D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E).",
-    inputSchema: external_exports.object({ title: external_exports.string(), body: external_exports.string(), folder: external_exports.string().optional() }),
-    execute: async (a) => text2(() => ctx.notes.create(a.title, a.body, a.folder))
+    description: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F. \u0422\u0435\u0433\u0438 \u043F\u0435\u0440\u0435\u0434\u0430\u0432\u0430\u0439 \u0442\u043E\u043B\u044C\u043A\u043E \u0432 tags, \u043D\u0435 \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0439 \u0441\u0442\u0440\u043E\u043A\u0443 \u0441 \u0442\u0435\u0433\u0430\u043C\u0438 \u0432 body. folder \u2014 \u043F\u0443\u0442\u044C \u043F\u0430\u043F\u043A\u0438 \u0432\u0438\u0434\u0430 \xAB\u0420\u0430\u0431\u043E\u0442\u0430/QA\xBB, \u043D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E.",
+    inputSchema: external_exports.object({
+      title: external_exports.string(),
+      body: external_exports.string(),
+      folder: external_exports.string().optional(),
+      tags: external_exports.array(external_exports.string()).optional().describe("\u0442\u0435\u0433\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u0431\u0435\u0437 \u0441\u0438\u043C\u0432\u043E\u043B\u0430 #")
+    }),
+    execute: async (a) => text2(async () => {
+      if (!await ctx.confirmNotes(`\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \xAB${a.title}\xBB?`)) return "\u043E\u0448\u0438\u0431\u043A\u0430 USER_DECLINED: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u0441\u043E\u0437\u0434\u0430\u0432\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443.";
+      return ctx.notes.create(a.title, a.body, a.folder, a.tags);
+    })
   });
   add("notes_append", {
-    description: "\u0414\u043E\u043F\u0438\u0441\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0432 \u043A\u043E\u043D\u0435\u0446 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F \u043F\u043E id.",
-    inputSchema: external_exports.object({ id: external_exports.string(), text: external_exports.string() }),
+    description: "\u0418\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0443\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u043F\u043E id: \u0434\u043E\u043F\u0438\u0441\u0430\u0442\u044C \u043E\u0431\u044B\u0447\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0447\u0435\u0440\u0435\u0437 text \u0438/\u0438\u043B\u0438 \u0434\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u043D\u0430\u0441\u0442\u043E\u044F\u0449\u0438\u0435 \u0442\u0435\u0433\u0438 \u0447\u0435\u0440\u0435\u0437 tags. \u041D\u0438\u043A\u043E\u0433\u0434\u0430 \u043D\u0435 \u0437\u0430\u043F\u0438\u0441\u044B\u0432\u0430\u0439 \u0445\u044D\u0448\u0442\u0435\u0433\u0438 \u0432 text.",
+    inputSchema: external_exports.object({
+      id: external_exports.string(),
+      text: external_exports.string().optional(),
+      tags: external_exports.array(external_exports.string()).optional().describe("\u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0435\u043C\u044B\u0435 \u0442\u0435\u0433\u0438 \u0431\u0435\u0437 \u0441\u0438\u043C\u0432\u043E\u043B\u0430 #")
+    }),
     execute: async (a) => text2(async () => {
-      if (!await ctx.confirmNotes(`\u0414\u043E\u043F\u0438\u0441\u0430\u0442\u044C \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${a.id}?`)) return "\u043E\u0448\u0438\u0431\u043A\u0430 USER_DECLINED: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043C\u0435\u043D\u044F\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443.";
-      return ctx.notes.append(a.id, a.text);
+      if (!a.text && !a.tags?.length) return "\u043E\u0448\u0438\u0431\u043A\u0430: \u0443\u043A\u0430\u0436\u0438\u0442\u0435 text \u0438\u043B\u0438 tags.";
+      if (!await ctx.confirmNotes(`\u0418\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${a.id}?`)) return "\u043E\u0448\u0438\u0431\u043A\u0430 USER_DECLINED: \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043D\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u043B \u043C\u0435\u043D\u044F\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443.";
+      return ctx.notes.append(a.id, a.text, a.tags);
     })
   });
   add("done", {
     description: "\u0417\u0430\u043A\u043E\u043D\u0447\u0438\u0442\u044C \u0437\u0430\u0434\u0430\u0447\u0443: outcome \u2014 success, partial \u0438\u043B\u0438 failed; summary \u2014 \u043E\u0442\u0432\u0435\u0442 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044E.",
     inputSchema: external_exports.object({ outcome: external_exports.enum(["success", "partial", "failed"]), summary: external_exports.string() }),
-    execute: async (a) => a.summary
+    execute: async (a) => {
+      if (a.outcome === "success" && verificationDebt) return `\u043E\u0448\u0438\u0431\u043A\u0430 VERIFICATION_REQUIRED: \u043F\u043E\u0441\u043B\u0435 ${verificationDebt} \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D. \u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0432\u044B\u0437\u043E\u0432\u0438\u0442\u0435 snapshot/read/wait, \u0437\u0430\u0442\u0435\u043C \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443.`;
+      return a.summary;
+    }
   });
   let queue = Promise.resolve();
-  for (const def of Object.values(tools)) {
+  let mutationGeneration = 0;
+  for (const [toolName, def] of Object.entries(tools)) {
     const execute = def.execute;
     if (!execute) continue;
     def.execute = (input2, options) => {
-      const run = queue.then(() => execute(input2, options));
+      const enqueuedAt = mutationGeneration;
+      const run = queue.then(async () => {
+        const name5 = toolName;
+        if (enqueuedAt !== mutationGeneration && actionNames.has(name5)) {
+          return "\u043E\u0448\u0438\u0431\u043A\u0430 PAGE_CHANGED: \u043F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0435\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435. \u0421\u0434\u0435\u043B\u0430\u0439\u0442\u0435 \u043D\u043E\u0432\u044B\u0439 snapshot \u0438 \u0432\u044B\u0437\u043E\u0432\u0438\u0442\u0435 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E.";
+        }
+        const output2 = await execute(input2, options);
+        const value = String(output2 ?? "");
+        if (verificationNames.has(name5) && !value.startsWith("\u043E\u0448\u0438\u0431\u043A\u0430")) {
+          verificationDebt = "";
+          consecutiveErrors = 0;
+        }
+        if (actionNames.has(name5) && (!value.startsWith("\u043E\u0448\u0438\u0431\u043A\u0430") || value.includes("dispatched=true"))) mutationGeneration++;
+        return output2;
+      });
       queue = run.catch(() => {
       });
       return run;
@@ -40035,9 +40696,15 @@ function fitToContext(messages, contextTokens) {
 // src/agent/budgets.ts
 var OUTPUT_RESERVE = 2048;
 var PER_TOOL = 60;
+var toolTokens = (tools) => Object.values(tools).reduce((sum, tool2) => sum + PER_TOOL + Math.ceil((tool2.description ?? "").length / 3), 0);
+function measureContext(o) {
+  const system = Math.ceil(o.system.length / 3);
+  const tools = toolTokens(o.tools);
+  const history = Math.ceil(o.messages.reduce((sum, message) => sum + (typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length), 0) / 3);
+  return { used: Math.min(o.context, system + tools + history), limit: o.context, system, tools, history };
+}
 function budgets(o) {
-  const toolTokens = Object.values(o.tools).reduce((sum, t) => sum + PER_TOOL + Math.ceil((t.description ?? "").length / 3), 0);
-  const overhead = Math.ceil(o.system.length / 3) + toolTokens;
+  const overhead = Math.ceil(o.system.length / 3) + toolTokens(o.tools);
   const run = Math.max(1024, o.context - overhead - OUTPUT_RESERVE);
   return { run, history: Math.round(run * (o.agent ? 0.25 : 0.5)) };
 }
@@ -40574,6 +41241,7 @@ function createAgentSession(deps) {
     notes: deps.notes ?? NO_NOTES,
     vision: deps.vision,
     screenshots: deps.screenshots,
+    locatorKind: deps.locatorKind,
     ask: async ({ question, kind }) => {
       const answer = await deps.ask({ kind, text: question });
       if (kind === "takeover") return answer === "done" ? "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u0441\u0434\u0435\u043B\u0430\u043B \u044D\u0442\u043E\u0442 \u0448\u0430\u0433 \u0438 \u0432\u0435\u0440\u043D\u0443\u043B \u0432\u043A\u043B\u0430\u0434\u043A\u0443." : "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C \u043E\u0442\u043C\u0435\u043D\u0438\u043B \u044D\u0442\u043E\u0442 \u0448\u0430\u0433: \u043D\u0435 \u043F\u044B\u0442\u0430\u0439\u0442\u0435\u0441\u044C \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u0435\u0433\u043E \u0434\u0440\u0443\u0433\u0438\u043C \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u043C.";
@@ -40610,6 +41278,7 @@ var ChatRunner = class {
   #broker;
   /** Each chat's agent tabs and tab group, so its next reply continues in them (kept while the worker lives). */
   #tabMemory = /* @__PURE__ */ new Map();
+  #highlightTabs = /* @__PURE__ */ new Map();
   constructor(deps) {
     this.#deps = deps;
     this.#broker = new PromptBroker(deps.emit);
@@ -40630,15 +41299,55 @@ var ChatRunner = class {
   stop(conversationId) {
     this.#runs.get(conversationId)?.controller.abort();
   }
-  async delete(conversationId) {
+  async delete(conversationId, currentTabId) {
     const run = this.#runs.get(conversationId);
     if (run) {
       run.deleted = true;
       run.controller.abort();
       await run.finished;
     }
+    await this.#clearConversationHighlights(conversationId, currentTabId);
+    await this.#deleteTabGroup(conversationId);
     await deleteConversation(conversationId);
     this.#deps.emit({ type: "deleted", conversationId });
+  }
+  async #rememberHighlights(conversationId, tabIds) {
+    let tabs = this.#highlightTabs.get(conversationId);
+    if (!tabs) {
+      tabs = new Set(await this.#deps.highlightMemory?.get(conversationId).catch(() => void 0) ?? []);
+      this.#highlightTabs.set(conversationId, tabs);
+    }
+    for (const id of tabIds) if (Number.isInteger(id) && id >= 0) tabs.add(id);
+    await this.#deps.highlightMemory?.set(conversationId, [...tabs]).catch(() => {
+    });
+  }
+  async #clearConversationHighlights(conversationId, currentTabId) {
+    const remembered = this.#highlightTabs.get(conversationId) ?? new Set(await this.#deps.highlightMemory?.get(conversationId).catch(() => void 0) ?? []);
+    if (currentTabId !== null && currentTabId !== void 0) remembered.add(currentTabId);
+    const task = this.#tabMemory.get(conversationId) ?? await this.#deps.tabMemory?.get(conversationId).then((m) => m ? { members: new Set(m.members), groupId: m.groupId } : void 0).catch(() => void 0);
+    for (const id of task?.members ?? []) remembered.add(id);
+    if (this.#deps.clearHighlights) {
+      await Promise.all([...remembered].map((id) => this.#deps.clearHighlights(id, conversationId).catch(() => {
+      })));
+    }
+    this.#highlightTabs.delete(conversationId);
+    await this.#deps.highlightMemory?.delete?.(conversationId).catch(() => {
+    });
+  }
+  /** A task group belongs to its chat. Deleting the chat dissolves the group but keeps its tabs open. */
+  async #deleteTabGroup(conversationId) {
+    let memory = this.#tabMemory.get(conversationId);
+    if (!memory) {
+      const saved = await this.#deps.tabMemory?.get(conversationId).catch(() => void 0);
+      if (saved) memory = { members: new Set(saved.members), groupId: saved.groupId };
+    }
+    this.#tabMemory.delete(conversationId);
+    if (memory?.groupId !== null && memory?.groupId !== void 0 && this.#deps.tabsApi) {
+      await Promise.all([...memory.members].map((id) => this.#deps.tabsApi.ungroup(id).catch(() => {
+      })));
+    }
+    await this.#deps.tabMemory?.delete?.(conversationId).catch(() => {
+    });
   }
   #setActive(delta) {
     this.#active += delta;
@@ -40678,6 +41387,7 @@ var ChatRunner = class {
   async #reply(command, text3, run, claim2) {
     const now2 = this.#deps.now ?? Date.now;
     const settings = await this.#deps.settings();
+    const locatorKind = detectLocatorIntent(text3);
     const profiles = await listProfiles();
     const profile = profiles.find((p) => p.id === command.profileId) ?? profiles[0];
     let conversation = command.conversationId ? await getConversation(command.conversationId) : void 0;
@@ -40717,7 +41427,7 @@ var ChatRunner = class {
       const tabId = command.tabId;
       if (!this.#deps.page) return Promise.resolve(unavailable("\u0418\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u044B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B."));
       if (tabId === null || tabId === void 0) return Promise.resolve(unavailable("\u041D\u0435\u0442 \u043E\u0442\u043A\u0440\u044B\u0442\u043E\u0439 \u0432\u043A\u043B\u0430\u0434\u043A\u0438 \u0440\u044F\u0434\u043E\u043C \u0441 \u043F\u0430\u043D\u0435\u043B\u044C\u044E."));
-      handle ??= this.#deps.page(tabId);
+      handle ??= this.#deps.page(tabId, conversation.id);
       return handle.then((h) => h.tools, (error62) => unavailable(error62 instanceof Error ? error62.message : String(error62)));
     };
     const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes("vision");
@@ -40734,7 +41444,7 @@ var ChatRunner = class {
       profile,
       conversation,
       settings,
-      openTab: this.#deps.openTab,
+      openTab: (tabId, gate) => this.#deps.openTab(tabId, gate, conversation.id),
       tabsApi: this.#deps.tabsApi,
       tabGroupsApi: this.#deps.tabGroupsApi,
       notes: this.#deps.notes,
@@ -40745,23 +41455,32 @@ var ChatRunner = class {
       memory: this.#tabMemory.get(conversationId) ?? this.#tabMemory.set(conversationId, { members: /* @__PURE__ */ new Set(), groupId: null }).get(conversationId),
       ask: (prompt) => this.#broker.ask({ ...prompt, conversationId }, run.controller.signal),
       vision,
-      screenshots
+      screenshots,
+      locatorKind
     }) : null;
-    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, { vision, screenshots }) : {};
+    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, { vision, screenshots, locatorKind }) : {};
     const toolNames = Object.keys(tools);
-    const openTab = !agent && this.#deps.page && this.#deps.currentTab && command.tabId !== null && command.tabId !== void 0 ? await this.#deps.currentTab(command.tabId).catch(() => null) : null;
+    const openTab = this.#deps.currentTab && command.tabId !== null && command.tabId !== void 0 ? await this.#deps.currentTab(command.tabId).catch(() => null) : null;
     let steps = 0;
     let doneSummary = null;
     let doneOutcome = "success";
+    let verifiedLocatorAnswer = null;
+    let contextPlan = null;
     let afterTool = false;
     const emitStep = (step) => this.#deps.emit({ type: "step", conversationId: reply.conversationId, messageId: reply.id, step });
     try {
       const system = agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames);
-      const budget = budgets({ context, system, tools, agent: Boolean(agent) });
+      const toolDescriptions = tools;
+      const budget = budgets({ context, system, tools: toolDescriptions, agent: Boolean(agent) });
+      const requestMessages = withOpenTab(toModelMessages([...history, user], budget.history), openTab);
+      contextPlan = { system, historyBudget: budget.history, tools: toolDescriptions };
+      reply.context = measureContext({ context, system, tools: toolDescriptions, messages: requestMessages });
+      this.#deps.emit({ type: "context", conversationId: reply.conversationId, messageId: reply.id, context: reply.context });
+      if (!run.deleted) await putMessage({ ...reply });
       const parts = this.#deps.stream({
         settings,
         system,
-        messages: withOpenTab(toModelMessages([...history, user], budget.history), openTab),
+        messages: requestMessages,
         signal: run.controller.signal,
         tools,
         ...agent ? { maxSteps: AGENT_MAX_STEPS, stopOnTool: "done", prepareMessages: (m) => screenshots.inject(fitToContext(m, budget.run)) } : { maxSteps: CHAT_MAX_STEPS, prepareMessages: (m) => screenshots.inject(fitToContext(m, budget.run)) }
@@ -40787,14 +41506,27 @@ var ChatRunner = class {
         if (part.type === "tool-result") {
           const index = reply.steps.findIndex((s) => s.id === part.id);
           if (index >= 0) {
+            if (reply.steps[index].name === "locator" && part.ok) {
+              verifiedLocatorAnswer = extractLocatorAnswer(part.value ?? part.summary) ?? verifiedLocatorAnswer;
+            }
             reply.steps[index] = { ...reply.steps[index], status: part.ok ? "done" : "error", summary: part.summary };
+            if (reply.steps[index].name === "done" && !part.ok) {
+              doneOutcome = "partial";
+              doneSummary = `${doneSummary?.trim() ? `${doneSummary.trim()} ` : ""}\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043D\u0435\u043B\u044C\u0437\u044F \u0441\u0447\u0438\u0442\u0430\u0442\u044C \u043F\u043E\u043B\u043D\u043E\u0441\u0442\u044C\u044E \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u043C: ${part.summary}`;
+            }
             emitStep(reply.steps[index]);
+            void this.#deps.recordMetric?.(reply.steps[index].name, part.ok, part.summary);
+            if (part.ok && reply.steps[index].name === "highlight") {
+              const ids = agent ? [...this.#tabMemory.get(conversationId)?.members ?? []] : command.tabId === null || command.tabId === void 0 ? [] : [command.tabId];
+              await this.#rememberHighlights(conversationId, ids);
+            }
           }
           afterTool = true;
           if (!run.deleted) await putMessage({ ...reply, steps: [...reply.steps] });
           continue;
         }
         if (part.type === "text") {
+          if (locatorKind) continue;
           if (afterTool && reply.text.trim() && part.delta.trim()) reply.text = `${reply.text.trimEnd()}
 
 `;
@@ -40823,6 +41555,10 @@ ${summary}`;
 ` : ""}\u0414\u043E\u0441\u0442\u0438\u0433\u043D\u0443\u0442 \u043B\u0438\u043C\u0438\u0442 \u0448\u0430\u0433\u043E\u0432 (${AGENT_MAX_STEPS}): \u0437\u0430\u0434\u0430\u0447\u0430 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D\u0430 \u043D\u0435 \u043F\u043E\u043B\u043D\u043E\u0441\u0442\u044C\u044E.`;
         }
       }
+      if (locatorKind && reply.status === "done") {
+        const requested = locatorKind === "best" ? "\u043B\u043E\u043A\u0430\u0442\u043E\u0440" : locatorKindLabel(locatorKind);
+        reply.text = verifiedLocatorAnswer ?? `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 \u0443\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0439 ${requested} \u0434\u043B\u044F \u043D\u0443\u0436\u043D\u043E\u0433\u043E \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u0430. \u041D\u0435\u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0435 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B \u043D\u0435 \u0432\u044B\u0434\u0430\u044E.`;
+      }
     } catch (error62) {
       if (run.controller.signal.aborted) reply.status = "stopped";
       else {
@@ -40841,7 +41577,15 @@ ${summary}`;
       }
     }
     if (reply.steps?.some((s) => s.status === "running")) {
-      reply.steps = reply.steps.map((s) => s.status === "running" ? { ...s, status: "error", summary: UNFINISHED } : s);
+      reply.steps = reply.steps.map((s) => s.status !== "running" ? s : {
+        ...s,
+        status: isMutatingTool(s.name) ? "uncertain" : "error",
+        summary: isMutatingTool(s.name) ? "\u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D; \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0442\u0435\u043A\u0443\u0449\u0435\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435" : UNFINISHED
+      });
+    }
+    if (contextPlan) {
+      const messages = withOpenTab(toModelMessages([...history, user, reply], contextPlan.historyBudget), openTab);
+      reply.context = measureContext({ context, system: contextPlan.system, tools: contextPlan.tools, messages });
     }
     if (!reply.steps.length) delete reply.steps;
     await this.#finish(run, reply);
@@ -40864,6 +41608,7 @@ var ports = /* @__PURE__ */ new Set();
 var emit = (event) => {
   for (const port of ports) port.postMessage(event);
 };
+var metricQueue = Promise.resolve();
 var runner = new ChatRunner({
   stream: ollamaStream,
   settings: () => getSettings(),
@@ -40872,20 +41617,20 @@ var runner = new ChatRunner({
     void chrome.runtime.getPlatformInfo();
   },
   // The debugger attaches only for a reply that reads the page, and detaches when that reply ends.
-  page: async (tabId) => {
+  page: async (tabId, ownerId) => {
     const settings = await getSettings();
     const [session, context] = await Promise.all([acquire(tabId), modelContext(settings.ollamaUrl, settings.model)]);
-    const tools = new PageTools(session, { budget: pageBudget(context) });
+    const tools = new PageTools(session, { budget: pageBudget(context), ownerId });
     return { tools, release: async () => {
       tools.dispose();
       await release(session);
     } };
   },
   // Agent mode: each tab of a task gets page tools with that reply's gate.
-  openTab: async (tabId, gate) => {
+  openTab: async (tabId, gate, ownerId) => {
     const settings = await getSettings();
     const [session, context] = await Promise.all([acquire(tabId), modelContext(settings.ollamaUrl, settings.model)]);
-    const tools = new PageTools(session, { budget: pageBudget(context), gate });
+    const tools = new PageTools(session, { budget: pageBudget(context), gate, ownerId });
     return { tools, release: async () => {
       tools.dispose();
       await release(session);
@@ -40901,12 +41646,48 @@ var runner = new ChatRunner({
   setSiteRule: (site, rule) => setSiteRule(site, rule),
   capabilities: (settings) => modelCapabilities(settings.ollamaUrl, settings.model),
   contextTokens: (settings) => modelContext(settings.ollamaUrl, settings.model),
+  clearHighlights: async (tabId, ownerId) => {
+    const session = await acquire(tabId);
+    const tools = new PageTools(session, { budget: pageBudget(8192), ownerId });
+    try {
+      await tools.clearHighlights();
+    } finally {
+      tools.dispose();
+      await release(session);
+    }
+  },
   // Kept in session storage: it survives a worker restart, not a browser restart (tab ids change then anyway).
   tabMemory: {
     get: async (id) => (await chrome.storage.session.get(`tabs:${id}`))[`tabs:${id}`],
     set: async (id, m) => {
       await chrome.storage.session.set({ [`tabs:${id}`]: m });
+    },
+    delete: async (id) => {
+      await chrome.storage.session.remove(`tabs:${id}`);
     }
+  },
+  highlightMemory: {
+    get: async (id) => (await chrome.storage.session.get(`highlights:${id}`))[`highlights:${id}`],
+    set: async (id, tabs) => {
+      await chrome.storage.session.set({ [`highlights:${id}`]: tabs });
+    },
+    delete: async (id) => {
+      await chrome.storage.session.remove(`highlights:${id}`);
+    }
+  },
+  recordMetric: (name5, ok, summary) => {
+    metricQueue = metricQueue.then(async () => {
+      const key = "agent:metrics";
+      const current = (await chrome.storage.local.get(key))[key] ?? {};
+      const code = summary.match(/ошибка\s+([A-Z_]+)/)?.[1] ?? summary.match(/effect=(changed|unattributable|none)/)?.[1] ?? (ok ? "ok" : "error");
+      const item = current[name5] ?? { total: 0, ok: 0, outcomes: {} };
+      item.total++;
+      if (ok) item.ok++;
+      item.outcomes[code] = (item.outcomes[code] ?? 0) + 1;
+      current[name5] = item;
+      await chrome.storage.local.set({ [key]: current });
+    }).catch(() => {
+    });
   }
 });
 var ready = openAssistantDb().then(() => markInterrupted()).catch(console.error);
@@ -40919,7 +41700,7 @@ chrome.runtime.onConnect.addListener((port) => {
     await ready;
     if (message.type === "send") runner.send(message).catch(console.error);
     else if (message.type === "stop") runner.stop(message.conversationId);
-    else if (message.type === "delete") runner.delete(message.conversationId).catch(console.error);
+    else if (message.type === "delete") runner.delete(message.conversationId, message.tabId).catch(console.error);
     else if (message.type === "answer") runner.answer(message.promptId, message.answer);
     else if (message.type === "mode") runner.setMode(message.conversationId, message.mode, message.permission).catch(console.error);
   });

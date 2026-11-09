@@ -10,6 +10,7 @@ import {titleFrom} from '../src/store/title.ts';
 import type {WorkerToPanel} from '../src/shared/protocol.ts';
 import type {StreamPart, StreamReply} from '../src/llm/stream.ts';
 import type {Message, Settings} from '../src/store/types.ts';
+import {wrapLocatorAnswer} from '../src/agent/locator-intent.ts';
 
 const SETTINGS: Settings = {ollamaUrl: 'http://localhost:11434', model: 'm', siteRules: {}, border: true};
 
@@ -85,13 +86,14 @@ test('send создаёт чат и стримит ответ', async () => {
   const fake = fakeModel([{type: 'reasoning', delta: 'хм'}, {type: 'text', delta: 'Привет, '}, {type: 'text', delta: 'мир'}]);
   const {chat, events} = runner(fake);
   await chat.send(send('Скажи привет'));
-  assert.deepEqual(events.map(e => e.type), ['started', 'delta', 'delta', 'delta', 'finished']);
+  assert.deepEqual(events.map(e => e.type), ['started', 'context', 'delta', 'delta', 'delta', 'finished']);
   const deltas = events.filter(e => e.type === 'delta');
   assert.equal(deltas.at(-1)?.text, 'Привет, мир');
   assert.equal(deltas.at(-1)?.reasoning, 'хм');
   const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
   assert.equal(finished.message.status, 'done');
   assert.equal(finished.message.model, 'm');
+  assert.ok(finished.message.context?.used && finished.message.context.limit === 8192);
   const [conversation] = await db.listConversations();
   assert.equal(conversation.title, titleFrom('Скажи привет'));
   const stored = await db.listMessages(conversation.id);
@@ -240,6 +242,54 @@ test('delete сообщает панелям deleted', async () => {
   assert.deepEqual(events.at(-1), {type: 'deleted', conversationId: id});
 });
 
+test('delete расформировывает сохранённую группу агента, не закрывая вкладки', async () => {
+  const conversation = await db.createConversation({profileId: 'assistant', firstMessage: 'задача', mode: 'agent'});
+  const ungrouped: number[] = [], removed: string[] = [];
+  const tabsApi = {ungroup: async (id: number) => { ungrouped.push(id); }} as unknown as typeof chrome.tabs;
+  const tabMemory = {
+    get: async () => ({members: [7, 8], groupId: 12}),
+    set: async () => {},
+    delete: async (id: string) => { removed.push(id); },
+  };
+  const chat = new ChatRunner({stream: fakeModel([]).stream, settings: async () => SETTINGS, emit: () => {}, tabsApi, tabMemory});
+  await chat.delete(conversation.id);
+  assert.deepEqual(ungrouped.sort(), [7, 8]);
+  assert.deepEqual(removed, [conversation.id]);
+  assert.equal(await db.getConversation(conversation.id), undefined);
+});
+
+test('delete снимает подсветку с запомнённых вкладок и с текущей для старых чатов', async () => {
+  const conversation = await db.createConversation({profileId: 'assistant', firstMessage: 'подсвети'});
+  const cleared: number[] = [], deleted: string[] = [];
+  const highlightMemory = {
+    get: async () => [7, 8], set: async () => {},
+    delete: async (id: string) => { deleted.push(id); },
+  };
+  const chat = new ChatRunner({stream: fakeModel([]).stream, settings: async () => SETTINGS, emit: () => {},
+    highlightMemory, clearHighlights: async id => { cleared.push(id); }});
+  await chat.delete(conversation.id, 9);
+  assert.deepEqual(cleared.sort(), [7, 8, 9]);
+  assert.deepEqual(deleted, [conversation.id]);
+});
+
+test('успешная подсветка запоминает вкладку чата для последующей очистки', async () => {
+  const saved: [string, number[]][] = [];
+  const stream: StreamReply = async function* (request) {
+    const input = {text: 'кнопка'};
+    yield {type: 'tool-call', id: 'h', name: 'highlight', input};
+    const output = await (request.tools!.highlight as any).execute(input, {toolCallId: 'h', messages: []});
+    yield {type: 'tool-result', id: 'h', ok: !String(output).startsWith('ошибка'), summary: String(output)};
+  };
+  const page = async () => ({tools: {
+    highlight: async () => ({ok: true, text: 'выделено мест: 1'}),
+  } as any, release: async () => {}});
+  const chat = new ChatRunner({stream, settings: async () => SETTINGS, emit: () => {}, page,
+    highlightMemory: {get: async () => undefined, set: async (id, tabs) => { saved.push([id, tabs]); }}});
+  await chat.send({...send('подсвети'), tabId: 17});
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0][1], [17]);
+});
+
 test('delete до начала ответа не даёт started и не пишет сообщений', async () => {
   const conversation = await db.createConversation({profileId: 'assistant', firstMessage: 'было'});
   const g = gate();
@@ -293,10 +343,43 @@ test('шаги инструментов сохраняются', async () => {
   assert.equal(finished.message.steps?.[0].status, 'done');
   assert.equal(events.filter(e => e.type === 'step').length, 2);
   assert.equal(model.calls[0].maxSteps, 5);
-  assert.deepEqual(Object.keys(model.calls[0].tools ?? {}).sort(), ['clear_highlights', 'find', 'highlight', 'read', 'snapshot']);
+  assert.deepEqual(Object.keys(model.calls[0].tools ?? {}).sort(), ['clear_highlights', 'find', 'highlight', 'locator', 'read', 'snapshot']);
   assert.equal(counts.opened, 1);
   const stored = await db.listMessages(finished.conversationId);
   assert.equal(stored[1].steps?.[0].name, 'snapshot');
+});
+
+test('XPath-ответ берётся только из проверенного locator, даже если модель сочинила CSS и другие XPath', async () => {
+  let locatorArgs: unknown;
+  const canonical = 'XPath:\n```xpath\n//*[@id=\'save\']\n```\n\nПроверено: ровно 1 совпадение и тот же DOM-элемент.';
+  const stream: StreamReply = async function* (request) {
+    const input = {ref: 'a1', kind: 'css'};
+    yield {type: 'tool-call', id: 'l1', name: 'locator', input};
+    const output = await (request.tools!.locator as any).execute(input, {toolCallId: 'l1', messages: []});
+    yield {type: 'tool-result', id: 'l1', ok: true, summary: 'locator', value: String(output)};
+    yield {type: 'text', delta: 'CSS: #save\nXPath: //button\nXPath: //button[2]'};
+  };
+  const page = async () => ({tools: {
+    snapshot: async () => ({ok: true, text: ''}), find: async () => ({ok: true, text: ''}), read: async () => ({ok: true, text: ''}),
+    locator: async (args: unknown) => { locatorArgs = args; return {ok: true, text: wrapLocatorAnswer(canonical)}; },
+  } as any, release: async () => {}});
+  const events: WorkerToPanel[] = [];
+  const chat = new ChatRunner({stream, settings: async () => SETTINGS, emit: event => events.push(event), page});
+  await chat.send({...send('напиши XPath для кнопки Сохранить'), tabId: 5});
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.deepEqual(locatorArgs, {ref: 'a1', kind: 'xpath'});
+  assert.equal(finished.message.text, canonical);
+  assert.ok(!finished.message.text.includes('CSS:'));
+  assert.ok(!events.some(event => event.type === 'delta' && event.text.includes('//button[2]')));
+});
+
+test('при запросе локатора без проверенного результата раннер не показывает догадки модели', async () => {
+  const fake = fakeModel([{type: 'text', delta: 'Попробуйте //button или #save'}]);
+  const {chat, events} = runner(fake);
+  await chat.send(send('дай xpath кнопки'));
+  const finished = events.at(-1) as Extract<WorkerToPanel, {type: 'finished'}>;
+  assert.match(finished.message.text, /Не удалось получить проверенный уникальный XPath/);
+  assert.ok(!finished.message.text.includes('//button'));
 });
 
 test('ошибка инструмента не роняет ответ', async () => {

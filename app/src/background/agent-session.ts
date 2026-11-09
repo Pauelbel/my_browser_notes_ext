@@ -9,6 +9,7 @@ import type {ScreenshotStore} from '../agent/screenshots.ts';
 import {decideWrite, ruleFor} from '../agent/permissions.ts';
 import type {PanelAnswer, PendingPrompt} from '../shared/protocol.ts';
 import type {Conversation, Profile, Settings, SiteRule, ToolName} from '../store/types.ts';
+import type {LocatorKind} from '../agent/locator-intent.ts';
 
 type Ask = (prompt: Omit<PendingPrompt, 'id' | 'conversationId'>) => Promise<PanelAnswer>;
 
@@ -64,6 +65,7 @@ export interface AgentDeps {
   ask: Ask;
   vision?: boolean;
   screenshots?: ScreenshotStore;
+  locatorKind?: LocatorKind | null;
   openTab: (tabId: number, gate: Gate) => Promise<{tools: PageTools; release(): Promise<void>}>;
   tabsApi: typeof chrome.tabs;
   tabGroupsApi?: typeof chrome.tabGroups;
@@ -87,6 +89,7 @@ export function createAgentSession(deps: AgentDeps): {tools: ToolSet; names: Too
     notes: deps.notes ?? NO_NOTES,
     vision: deps.vision,
     screenshots: deps.screenshots,
+    locatorKind: deps.locatorKind,
     ask: async ({question, kind}) => {
       const answer = await deps.ask({kind, text: question});
       if (kind === 'takeover') return answer === 'done' ? 'Пользователь сделал этот шаг и вернул вкладку.' : 'Пользователь отменил этот шаг: не пытайтесь сделать его другим способом.';

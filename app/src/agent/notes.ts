@@ -1,9 +1,9 @@
-// The user's notes as agent tools: search, read, create, append. They use the notes database of version 1.0 through
+// The user's notes as agent tools: search, read, create, append text or add tags. They use the notes database of version 1.0 through
 // its own module, so the notes UI sees every change at once. Note text is the user's data, not instructions.
 // @ts-ignore: plain JS modules of the notes UI
 import {open, loadAll, createNote, putNote} from '../../db.js';
 // @ts-ignore: plain JS modules of the notes UI
-import {folderPath, matches, noteTitle} from '../../tree.js';
+import {folderPath, matches, noteTitle, parseTags} from '../../tree.js';
 
 interface Note { id: string; title: string; body: string; tags: string[]; folderId: string | null; updated: number }
 interface Folder { id: string; name: string; parentId: string | null }
@@ -40,7 +40,7 @@ export async function notesRead(id: string): Promise<string> {
   return `${NOTE_START}\n${neutralize(`${head}\n\n${body}`)}\n${NOTE_END}`;
 }
 
-export async function notesCreate(title: string, body: string, folder?: string): Promise<string> {
+export async function notesCreate(title: string, body: string, folder?: string, tags: string[] = []): Promise<string> {
   const {folders} = await all();
   let folderId: string | null = null;
   if (folder) {
@@ -48,16 +48,24 @@ export async function notesCreate(title: string, body: string, folder?: string):
     folderId = folders.find(f => (folderPath(folders, f.id) as string[]).join(' / ').toLowerCase() === want)?.id ?? null;
   }
   const note = await createNote(folderId);
-  await putNote({...note, title, body});
-  return `Заметка «${title}» создана (${note.id}) в «${pathOf(folders, folderId)}».${folder && !folderId ? ` Папки «${folder}» нет — заметка в корне.` : ''}`;
+  const normalizedTags = parseTags(tags.join(' ')) as string[];
+  await putNote({...note, title, body, tags: normalizedTags});
+  return `Заметка «${title}» создана (${note.id}) в «${pathOf(folders, folderId)}».${folder && !folderId ? ` Папки «${folder}» нет — заметка в корне.` : ''}`
+    + `\n[note-receipt operation=create id=${note.id} fields=title,body,tags,folder tags=${normalizedTags.length}]`;
 }
 
-export async function notesAppend(id: string, text: string): Promise<string> {
+export async function notesAppend(id: string, text?: string, tags: string[] = []): Promise<string> {
   const {notes} = await all();
   const note = notes.find(n => n.id === id);
   if (!note) throw new Error(`Заметка ${id} не найдена.`);
-  await putNote({...note, body: note.body ? `${note.body}\n\n${text}` : text});
-  return `Дописано в заметку «${noteTitle(note)}».`;
+  if (!text && !tags.length) throw new Error('Укажите текст или теги для заметки.');
+  const nextBody = text ? (note.body ? `${note.body}\n\n${text}` : text) : note.body;
+  const nextTags = parseTags([...note.tags, ...tags].join(' ')) as string[];
+  await putNote({...note, body: nextBody, tags: nextTags});
+  const fields = [text ? 'body' : '', tags.length ? 'tags' : ''].filter(Boolean).join(',');
+  const receipt = `[note-receipt operation=append id=${id} fields=${fields} tags=${nextTags.length}]`;
+  if (text && tags.length) return `Текст и теги добавлены в заметку «${noteTitle(note)}».\n${receipt}`;
+  return `${tags.length ? `Теги добавлены в заметку «${noteTitle(note)}».` : `Дописано в заметку «${noteTitle(note)}».`}\n${receipt}`;
 }
 
 export interface NotesApi {

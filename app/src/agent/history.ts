@@ -25,6 +25,7 @@ function shownSteps(steps: ToolStep[]): {shown: ToolStep[]; omitted: number} {
 /** A step that was still running when the reply ended may or may not have happened: its result says so. */
 function resultOf(s: ToolStep): string {
   if (s.status === 'running' || s.summary === UNFINISHED) return UNFINISHED;
+  if (s.status === 'uncertain') return s.summary || 'результат действия неизвестен; сначала проверьте состояние';
   return s.summary || (s.status === 'error' ? 'ошибка' : 'готово');
 }
 

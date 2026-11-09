@@ -75,6 +75,13 @@ test('step добавляет и обновляет шаг текущего со
   assert.deepEqual(applyEvent(inChat, {type: 'step', conversationId: 'c2', messageId: 'a', step}), inChat);
 });
 
+test('context обновляет занятость окна у текущего ответа', () => {
+  const context = {used: 3200, limit: 8192, system: 300, tools: 400, history: 2500};
+  const s = applyEvent(inChat, {type: 'context', conversationId: 'c1', messageId: 'a', context});
+  assert.deepEqual(s.messages[1].context, context);
+  assert.deepEqual(applyEvent(inChat, {type: 'context', conversationId: 'c2', messageId: 'a', context}), inChat);
+});
+
 const ask = (id: string, conversationId = 'c1') => ({id, conversationId, kind: 'confirm' as const, text: 'Нажать «Удалить»?'});
 
 test('вопросы: свой чат добавляется, чужой нет; prompt-closed убирает; running заменяет список своими', () => {

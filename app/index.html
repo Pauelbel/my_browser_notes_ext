@@ -17,6 +17,7 @@
     <span class="fsep"></span>
     <button id="openHistory" class="chat-only" data-icon="history" data-tip="Недавние чаты" aria-label="Недавние чаты" aria-haspopup="true" aria-expanded="false"></button>
     <button id="newChat" class="chat-only" data-icon="newChat" data-tip="Новый чат" aria-label="Новый чат"></button>
+    <button id="clearChat" class="chat-only" data-icon="trash" data-tip="Очистить текущий чат" aria-label="Очистить текущий чат" disabled></button>
     <button id="toggleSidebar" class="notes-only" data-icon="menu" data-tip="Показать/скрыть список" aria-label="Показать/скрыть список"></button>
     <button id="newNote" class="notes-only" data-icon="notePlus" data-tip="Новая заметка" aria-label="Новая заметка"></button>
     <button id="newFolder" class="notes-only" data-icon="folderPlus" data-tip="Новая папка" aria-label="Новая папка"></button>
@@ -32,6 +33,11 @@
 
 <main id="chat" class="chat-only" aria-label="Чат">
   <div id="transcript"></div>
+  <div id="contextUsage" class="chat-context" role="status" aria-live="polite" hidden>
+    <span class="context-label">Контекст</span>
+    <span class="context-track" aria-hidden="true"><span id="contextFill"></span></span>
+    <span id="contextText"></span>
+  </div>
   <form id="composer">
     <textarea id="prompt" rows="3" placeholder="Спросите что-нибудь…" aria-label="Сообщение"></textarea>
     <div class="composer-row">

@@ -9,6 +9,7 @@ import {getConversation, listMessages, listProfiles, onAssistantChange} from '..
 import {getSettings, saveSettings} from '../store/settings.ts';
 import {listModels} from '../llm/ollama.ts';
 import {icons} from '../../icons.js'; // plain JS, shared with the notes UI
+import {confirmDialog} from './dialogs.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const LAST = 'assistant:last';
@@ -51,6 +52,10 @@ export function initChat(client: Client): ChatView {
   /** Every open agent question, in any chat; the open chat shows its own. */
   const allPrompts = new Map<string, PendingPrompt>();
   const modelSelect = $<HTMLSelectElement>('modelSelect');
+  const clearChat = $<HTMLButtonElement>('clearChat');
+  const contextUsage = $('contextUsage');
+  const contextFill = $('contextFill');
+  const contextText = $('contextText');
 
   // ——— Rendering ———
 
@@ -78,11 +83,11 @@ export function initChat(client: Client): ChatView {
     const list = message.steps ?? [];
     steps.hidden = !list.length;
     steps.querySelector('summary')!.textContent = list.map(s => `${s.name}${s.input ? ` ${s.input}` : ''}`).join(' · ');
-    steps.classList.toggle('has-error', list.some(s => s.status === 'error'));
+    steps.classList.toggle('has-error', list.some(s => s.status === 'error' || s.status === 'uncertain'));
     steps.querySelector('.steps-list')!.replaceChildren(...list.map(s => {
       const line = document.createElement('div');
       line.className = `step ${s.status}`;
-      line.textContent = `${s.status === 'running' ? '…' : s.status === 'error' ? '✕' : '✓'} ${s.name}${s.input ? ` ${s.input}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;
+      line.textContent = `${s.status === 'running' ? '…' : s.status === 'uncertain' ? '?' : s.status === 'error' ? '✕' : '✓'} ${s.name}${s.input ? ` ${s.input}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;
       return line;
     }));
     node.querySelector('.md')!.innerHTML = renderMarkdown(hideRefs(message.text));
@@ -117,6 +122,24 @@ export function initChat(client: Client): ChatView {
     send.dataset.tip = state.running ? 'Остановить' : 'Отправить (Enter)';
     send.setAttribute('aria-label', state.running ? 'Остановить' : 'Отправить');
     send.disabled = !state.running && busy;
+    clearChat.disabled = state.conversationId === null || state.pendingRequestId !== null;
+    renderContext();
+  }
+
+  const compactTokens = (tokens: number) => tokens < 1000 ? String(tokens)
+    : `${new Intl.NumberFormat('ru', {maximumFractionDigits: tokens < 10_000 ? 1 : 0}).format(tokens / 1000)}K`;
+
+  function renderContext(): void {
+    const usage = [...state.messages].reverse().find(message => message.context)?.context;
+    contextUsage.hidden = !usage;
+    if (!usage) return;
+    const percent = Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100));
+    contextText.textContent = `${compactTokens(usage.used)} / ${compactTokens(usage.limit)} · ${percent}%`;
+    contextFill.style.width = `${percent}%`;
+    contextUsage.dataset.level = percent >= 85 ? 'danger' : percent >= 65 ? 'warning' : 'normal';
+    const details = `Контекст занят примерно на ${percent}%: история ${compactTokens(usage.history)}, системные инструкции ${compactTokens(usage.system)}, инструменты ${compactTokens(usage.tools)} токенов`;
+    contextUsage.dataset.tip = details;
+    contextUsage.setAttribute('aria-label', details);
   }
 
   /** The agent's questions as cards at the end of the transcript; answering sends the answer to the worker. */
@@ -259,6 +282,14 @@ export function initChat(client: Client): ChatView {
   $('composer').addEventListener('submit', event => { event.preventDefault(); void submit(); });
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!state.running) void submit(); }
+  });
+
+  clearChat.addEventListener('click', async () => {
+    const conversationId = state.conversationId;
+    if (!conversationId || !await confirmDialog('Очистить текущий чат? Вся его история и контекст будут удалены.', 'Очистить')) return;
+    const tabId = await activeTab();
+    client.post({type: 'delete', conversationId, tabId});
+    await open(null);
   });
 
   // ——— Opening and outside changes ———

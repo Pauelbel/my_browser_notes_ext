@@ -65,6 +65,11 @@ export function applyEvent(state: ChatState, event: WorkerToPanel): ChatState {
       if (index === -1) steps.push(event.step); else steps[index] = event.step;
       return {...state, messages: upsert(state.messages, {...message, steps})};
     }
+    case 'context': {
+      if (event.conversationId !== state.conversationId) return state;
+      const message = state.messages.find(m => m.id === event.messageId);
+      return message ? {...state, messages: upsert(state.messages, {...message, context: event.context})} : state;
+    }
     case 'prompt':
       return event.prompt.conversationId === state.conversationId ? {...state, prompts: [...state.prompts.filter(p => p.id !== event.prompt.id), event.prompt]} : state;
     case 'prompt-closed':

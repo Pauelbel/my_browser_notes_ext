@@ -17,12 +17,21 @@ export const PROBE_SOURCE = `(() => {
   if (document.documentElement) observe(); else document.addEventListener('DOMContentLoaded', observe, {once: true});
   const fold = s => s.toLowerCase().replace(/ё/g, 'е');
   const highlights = new Map();
+  const highlightTimers = new Map();
+  const armExpiry = owner => {
+    const key = owner || '*';
+    clearTimeout(highlightTimers.get(key));
+    highlightTimers.set(key, setTimeout(() => globalThis.__assistant && globalThis.__assistant.clearHighlights(owner || undefined), 10 * 60 * 1000));
+  };
   let layer = null;
   const ensureLayer = () => {
     if (layer && layer.host.isConnected) return layer;
     const host = document.createElement('div');
     host.setAttribute('${OVERLAY_ATTR}', '');
-    for (const [k, v] of [['position', 'fixed'], ['inset', '0'], ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
+    // A zero-sized host with fixed children cannot cover the page even in browser hit-testing implementations
+    // that handle pointer-events on shadow hosts inconsistently.
+    for (const [k, v] of [['position', 'fixed'], ['left', '0'], ['top', '0'], ['width', '0'], ['height', '0'], ['overflow', 'visible'],
+      ['pointer-events', 'none'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
     const root = host.attachShadow({mode: 'closed'});
     document.documentElement.append(host);
     layer = {host, root, boxes: []};
@@ -38,7 +47,7 @@ export const PROBE_SOURCE = `(() => {
   };
   globalThis.__assistant = {
     ${CHECKS_SOURCE}
-    highlightText(query, name) {
+    highlightText(query, name, owner) {
       const words = fold(query).split(/\\s+/).filter(Boolean); if (!words.length) return 0;
       // The visible text as one string with each character's node and offset: sites split a phrase over elements
       // (YouTube writes «29» and «комментариев» in two spans), so a match may span nodes.
@@ -75,14 +84,16 @@ export const PROBE_SOURCE = `(() => {
       for (const r of ranges) h.add(r);
       highlights.set(name, h);
       CSS.highlights.set(name, h);
+      armExpiry(owner);
       return ranges.length;
     },
-    highlightElement(el, color) {
+    highlightElement(el, color, owner) {
       const l = ensureLayer();
       const box = document.createElement('div');
       l.root.append(box);
-      l.boxes.push({el, box, color});
+      l.boxes.push({el, box, color, owner: owner || ''});
       l.place();
+      armExpiry(owner);
       return 1;
     },
     border(on, color) {
@@ -95,10 +106,15 @@ export const PROBE_SOURCE = `(() => {
         ['box-shadow', 'inset 0 0 0 3px ' + color + ', inset 0 0 18px ' + color], ['border-radius', '2px']]) host.style.setProperty(k, v, 'important');
       document.documentElement.append(host);
     },
-    clearHighlights() {
-      for (const name of highlights.keys()) CSS.highlights.delete(name);
-      highlights.clear();
-      if (layer) { layer.host.remove(); layer = null; }
+    clearHighlights(owner) {
+      const prefix = owner ? 'assistant-' + owner + '-' : '';
+      for (const name of [...highlights.keys()]) if (!owner || name.startsWith(prefix) || /^assistant-(yellow|green|blue|red|orange)$/.test(name)) { CSS.highlights.delete(name); highlights.delete(name); }
+      if (layer && owner) {
+        for (const item of layer.boxes.filter(x => x.owner === owner || !x.owner)) item.box.remove();
+        layer.boxes = layer.boxes.filter(x => x.owner !== owner && x.owner);
+        if (!layer.boxes.length) { layer.host.remove(); layer = null; }
+      } else if (layer) { layer.host.remove(); layer = null; }
+      const key = owner || '*'; clearTimeout(highlightTimers.get(key)); highlightTimers.delete(key);
     },
     state,
     readyState: () => document.readyState,

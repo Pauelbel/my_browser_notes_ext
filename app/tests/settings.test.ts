@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {DEFAULT_SETTINGS, getSettings, saveSettings, normalizeOllamaUrl, type KeyValueArea} from '../src/store/settings.ts';
+import {DEFAULT_SETTINGS, getSettings, saveSettings, normalizeOllamaUrl, normalizeRuleSite, type KeyValueArea} from '../src/store/settings.ts';
 
 function fakeArea(): KeyValueArea {
   const map = new Map<string, unknown>();
@@ -14,6 +14,12 @@ test('normalizeOllamaUrl', () => {
   assert.equal(normalizeOllamaUrl(' localhost:11434/ '), 'http://localhost:11434');
   assert.equal(normalizeOllamaUrl('http://127.0.0.1:11434/v1/'), 'http://127.0.0.1:11434');
   assert.equal(normalizeOllamaUrl(''), DEFAULT_SETTINGS.ollamaUrl);
+});
+
+test('normalizeRuleSite принимает домен, но не широкое или неоднозначное правило', () => {
+  assert.equal(normalizeRuleSite('https://www.Example.com/'), 'example.com');
+  assert.equal(normalizeRuleSite('localhost'), 'localhost');
+  for (const value of ['com', '.', 'example.com:443', 'example.com/path', 'https://user@example.com']) assert.equal(normalizeRuleSite(value), null, value);
 });
 
 test('getSettings без сохранённого даёт значения по умолчанию, saveSettings сливает и нормализует', async () => {

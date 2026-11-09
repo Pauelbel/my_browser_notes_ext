@@ -2,7 +2,8 @@
 // because repeating a delivered action could repeat its effect.
 export type PageErrorCode = 'PAGE_NOT_SUPPORTED' | 'DETACHED' | 'TIMEOUT' | 'REF_UNKNOWN' | 'REF_STALE' | 'NOT_VISIBLE'
   | 'NOT_ENABLED' | 'NOT_STABLE' | 'COVERED' | 'NOT_EDITABLE' | 'DIALOG_OPEN' | 'VALUE_MISMATCH' | 'NOT_FOUND' | 'INTERNAL'
-  | 'USER_DECLINED' | 'SITE_BLOCKED';
+  | 'USER_DECLINED' | 'SITE_BLOCKED' | 'PAGE_CHANGED' | 'POSTCONDITION_UNMET' | 'SESSION_DISPOSED' | 'LOOP_GUARD'
+  | 'AMBIGUOUS_TARGET';
 
 export class PageError extends Error {
   code: PageErrorCode;

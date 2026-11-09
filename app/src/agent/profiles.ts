@@ -7,6 +7,7 @@ export const TOOL_CATALOGUE: {name: ToolName; label: string; group: ToolGroup}[]
   {name: 'snapshot', label: 'Описание страницы', group: 'read'},
   {name: 'find', label: 'Найти элементы', group: 'read'},
   {name: 'read', label: 'Прочитать текст страницы', group: 'read'},
+  {name: 'locator', label: 'Проверенный CSS/XPath', group: 'read'},
   {name: 'screenshot', label: 'Скриншот', group: 'read'},
   {name: 'notes_search', label: 'Поиск по заметкам', group: 'read'},
   {name: 'notes_read', label: 'Чтение заметок', group: 'read'},

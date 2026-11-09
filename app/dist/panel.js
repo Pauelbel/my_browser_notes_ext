@@ -6,6 +6,7 @@ var TOOL_CATALOGUE = [
   { name: "snapshot", label: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", group: "read" },
   { name: "find", label: "\u041D\u0430\u0439\u0442\u0438 \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B", group: "read" },
   { name: "read", label: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B", group: "read" },
+  { name: "locator", label: "\u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0439 CSS/XPath", group: "read" },
   { name: "screenshot", label: "\u0421\u043A\u0440\u0438\u043D\u0448\u043E\u0442", group: "read" },
   { name: "notes_search", label: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0437\u0430\u043C\u0435\u0442\u043A\u0430\u043C", group: "read" },
   { name: "notes_read", label: "\u0427\u0442\u0435\u043D\u0438\u0435 \u0437\u0430\u043C\u0435\u0442\u043E\u043A", group: "read" },
@@ -267,6 +268,11 @@ function applyEvent(state, event) {
       if (index === -1) steps.push(event.step);
       else steps[index] = event.step;
       return { ...state, messages: upsert(state.messages, { ...message, steps }) };
+    }
+    case "context": {
+      if (event.conversationId !== state.conversationId) return state;
+      const message = state.messages.find((m) => m.id === event.messageId);
+      return message ? { ...state, messages: upsert(state.messages, { ...message, context: event.context }) } : state;
     }
     case "prompt":
       return event.prompt.conversationId === state.conversationId ? { ...state, prompts: [...state.prompts.filter((p) => p.id !== event.prompt.id), event.prompt] } : state;
@@ -3780,6 +3786,23 @@ function normalizeOllamaUrl(input) {
   url = url.replace(/\/+$/, "").replace(/\/v1$/, "").replace(/\/+$/, "");
   return url;
 }
+function normalizeRuleSite(input) {
+  let value = input.trim().toLowerCase();
+  if (!value) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `https://${value}`;
+  if (/:\d+(?:[/?#]|$)/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.port || url.username || url.password) return null;
+    if (url.pathname !== "/" || url.search || url.hash) return null;
+    const host = url.hostname.replace(/^www\./, "");
+    const domain = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+    if (host !== "localhost" && !domain.test(host)) return null;
+    return host;
+  } catch {
+    return null;
+  }
+}
 var defaultArea = () => chrome.storage.local;
 async function getSettings(area = defaultArea()) {
   const stored = (await area.get(KEY2))[KEY2];
@@ -3877,12 +3900,45 @@ var icons = {
   notes: svg2('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>'),
   history: svg2('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>'),
   newChat: svg2('<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/>'),
+  trash: svg2('<path d="M4 7h16M9 3h6l1 4H8zM6 7l1 14h10l1-14M10 11v6M14 11v6"/>'),
   send: svg2('<path d="M12 19V5M5 12l7-7 7 7"/>'),
   stop: svg2('<rect x="6" y="6" width="12" height="12" rx="2"/>')
 };
 
-// src/ui/chat.ts
+// src/ui/dialogs.ts
 var $2 = (id) => document.getElementById(id);
+function confirmDialog(text2, ok = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430") {
+  const dialog = $2("confirmDialog");
+  $2("confirmText").textContent = text2;
+  $2("confirmOk").textContent = ok;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.onclose = () => {
+      $2("confirmOk").textContent = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430";
+      resolve(dialog.returnValue === "ok");
+    };
+  });
+}
+function promptDialog(label, value = "", maxLength = 70) {
+  const dialog = $2("promptDialog");
+  const input = $2("promptInput");
+  $2("promptTitle").textContent = label;
+  input.value = value;
+  input.maxLength = maxLength;
+  dialog.returnValue = "";
+  dialog.showModal();
+  input.select();
+  return new Promise((resolve) => {
+    dialog.onclose = () => {
+      input.maxLength = 70;
+      resolve(dialog.returnValue === "ok" ? input.value.trim() || null : null);
+    };
+  });
+}
+
+// src/ui/chat.ts
+var $3 = (id) => document.getElementById(id);
 var LAST = "assistant:last";
 var PROFILE = "assistant:profile";
 var pref = (key) => {
@@ -3908,14 +3964,18 @@ function initChat(client2) {
   const runningListeners = [];
   const nodes = /* @__PURE__ */ new Map();
   const filled = /* @__PURE__ */ new Map();
-  const transcript = $2("transcript");
-  const input = $2("prompt");
-  const send = $2("sendButton");
-  const profileSelect = $2("profileSelect");
-  const modeSelect = $2("modeSelect");
-  const permissionSelect = $2("permissionSelect");
+  const transcript = $3("transcript");
+  const input = $3("prompt");
+  const send = $3("sendButton");
+  const profileSelect = $3("profileSelect");
+  const modeSelect = $3("modeSelect");
+  const permissionSelect = $3("permissionSelect");
   const allPrompts = /* @__PURE__ */ new Map();
-  const modelSelect = $2("modelSelect");
+  const modelSelect = $3("modelSelect");
+  const clearChat = $3("clearChat");
+  const contextUsage = $3("contextUsage");
+  const contextFill = $3("contextFill");
+  const contextText = $3("contextText");
   function messageNode(message) {
     let node = nodes.get(message.id);
     if (!node) {
@@ -3940,11 +4000,11 @@ function initChat(client2) {
     const list = message.steps ?? [];
     steps.hidden = !list.length;
     steps.querySelector("summary").textContent = list.map((s) => `${s.name}${s.input ? ` ${s.input}` : ""}`).join(" \xB7 ");
-    steps.classList.toggle("has-error", list.some((s) => s.status === "error"));
+    steps.classList.toggle("has-error", list.some((s) => s.status === "error" || s.status === "uncertain"));
     steps.querySelector(".steps-list").replaceChildren(...list.map((s) => {
       const line = document.createElement("div");
       line.className = `step ${s.status}`;
-      line.textContent = `${s.status === "running" ? "\u2026" : s.status === "error" ? "\u2715" : "\u2713"} ${s.name}${s.input ? ` ${s.input}` : ""}${s.summary ? ` \u2014 ${s.summary}` : ""}`;
+      line.textContent = `${s.status === "running" ? "\u2026" : s.status === "uncertain" ? "?" : s.status === "error" ? "\u2715" : "\u2713"} ${s.name}${s.input ? ` ${s.input}` : ""}${s.summary ? ` \u2014 ${s.summary}` : ""}`;
       return line;
     }));
     node.querySelector(".md").innerHTML = renderMarkdown(hideRefs(message.text));
@@ -3985,6 +4045,21 @@ function initChat(client2) {
     send.dataset.tip = state.running ? "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C" : "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C (Enter)";
     send.setAttribute("aria-label", state.running ? "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C" : "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C");
     send.disabled = !state.running && busy;
+    clearChat.disabled = state.conversationId === null || state.pendingRequestId !== null;
+    renderContext();
+  }
+  const compactTokens = (tokens) => tokens < 1e3 ? String(tokens) : `${new Intl.NumberFormat("ru", { maximumFractionDigits: tokens < 1e4 ? 1 : 0 }).format(tokens / 1e3)}K`;
+  function renderContext() {
+    const usage = [...state.messages].reverse().find((message) => message.context)?.context;
+    contextUsage.hidden = !usage;
+    if (!usage) return;
+    const percent = Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100));
+    contextText.textContent = `${compactTokens(usage.used)} / ${compactTokens(usage.limit)} \xB7 ${percent}%`;
+    contextFill.style.width = `${percent}%`;
+    contextUsage.dataset.level = percent >= 85 ? "danger" : percent >= 65 ? "warning" : "normal";
+    const details = `\u041A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0437\u0430\u043D\u044F\u0442 \u043F\u0440\u0438\u043C\u0435\u0440\u043D\u043E \u043D\u0430 ${percent}%: \u0438\u0441\u0442\u043E\u0440\u0438\u044F ${compactTokens(usage.history)}, \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0435 \u0438\u043D\u0441\u0442\u0440\u0443\u043A\u0446\u0438\u0438 ${compactTokens(usage.system)}, \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u044B ${compactTokens(usage.tools)} \u0442\u043E\u043A\u0435\u043D\u043E\u0432`;
+    contextUsage.dataset.tip = details;
+    contextUsage.setAttribute("aria-label", details);
   }
   function renderPrompts() {
     transcript.querySelectorAll(".prompt-card").forEach((card) => {
@@ -4141,7 +4216,7 @@ function initChat(client2) {
       permission: permissionSelect.value
     });
   }
-  $2("composer").addEventListener("submit", (event) => {
+  $3("composer").addEventListener("submit", (event) => {
     event.preventDefault();
     void submit();
   });
@@ -4150,6 +4225,13 @@ function initChat(client2) {
       event.preventDefault();
       if (!state.running) void submit();
     }
+  });
+  clearChat.addEventListener("click", async () => {
+    const conversationId = state.conversationId;
+    if (!conversationId || !await confirmDialog("\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0447\u0430\u0442? \u0412\u0441\u044F \u0435\u0433\u043E \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u0438 \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u0431\u0443\u0434\u0443\u0442 \u0443\u0434\u0430\u043B\u0435\u043D\u044B.", "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C")) return;
+    const tabId = await activeTab();
+    client2.post({ type: "delete", conversationId, tabId });
+    await open(null);
   });
   async function open(conversationId) {
     const conversation = conversationId ? await getConversation(conversationId) : void 0;
@@ -4230,38 +4312,6 @@ var fold = (text2) => text2.toLocaleLowerCase("ru").replaceAll("\u0451", "\u0435
 function filterConversations(list, query) {
   const q2 = fold(query.trim());
   return list.filter((c2) => !q2 || fold(c2.title).includes(q2)).sort((a3, b) => b.updatedAt - a3.updatedAt);
-}
-
-// src/ui/dialogs.ts
-var $3 = (id) => document.getElementById(id);
-function confirmDialog(text2, ok = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430") {
-  const dialog = $3("confirmDialog");
-  $3("confirmText").textContent = text2;
-  $3("confirmOk").textContent = ok;
-  dialog.returnValue = "";
-  dialog.showModal();
-  return new Promise((resolve) => {
-    dialog.onclose = () => {
-      $3("confirmOk").textContent = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430";
-      resolve(dialog.returnValue === "ok");
-    };
-  });
-}
-function promptDialog(label, value = "", maxLength = 70) {
-  const dialog = $3("promptDialog");
-  const input = $3("promptInput");
-  $3("promptTitle").textContent = label;
-  input.value = value;
-  input.maxLength = maxLength;
-  dialog.returnValue = "";
-  dialog.showModal();
-  input.select();
-  return new Promise((resolve) => {
-    dialog.onclose = () => {
-      input.maxLength = 70;
-      resolve(dialog.returnValue === "ok" ? input.value.trim() || null : null);
-    };
-  });
 }
 
 // src/ui/history.ts
@@ -4363,7 +4413,8 @@ function initHistory(chat2, client2) {
       const title = await promptDialog("\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u0447\u0430\u0442\u0430", target.title, TITLE_LENGTH);
       if (title) await renameConversation(target.id, title);
     } else if (action === "delete" && await confirmDialog(`\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0447\u0430\u0442 \xAB${target.title}\xBB \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430?`)) {
-      client2.post({ type: "delete", conversationId: target.id });
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+      client2.post({ type: "delete", conversationId: target.id, tabId: tab?.id ?? null });
       if (target.id === chat2.current()) await chat2.open(null);
     }
   });
@@ -4530,8 +4581,13 @@ function initSettings() {
   });
   $5("addSiteRule").addEventListener("click", async () => {
     const input = $5("siteRuleSite");
-    const site = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
-    if (!site) return;
+    const site = normalizeRuleSite(input.value);
+    if (!site) {
+      input.setCustomValidity("\u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u0434\u043E\u043C\u0435\u043D \u0431\u0435\u0437 \u043F\u043E\u0440\u0442\u0430 \u0438 \u043F\u0443\u0442\u0438, \u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 example.com");
+      input.reportValidity();
+      return;
+    }
+    input.setCustomValidity("");
     await setSiteRule(site, $5("siteRuleValue").value);
     input.value = "";
     await renderAgent();

@@ -30,13 +30,15 @@ test('notesRead: содержимое в блоке заметки; неизве
   await assert.rejects(notesRead('нет-такого'), /не найдена/);
 });
 
-test('notesCreate: в папку по пути', async () => {
-  const result = await notesCreate('Отчёт', 'Найден баг', 'Работа/QA');
+test('notesCreate: в папку по пути, теги сохраняются отдельно от текста', async () => {
+  const result = await notesCreate('Отчёт', 'Найден баг', 'Работа/QA', ['#регрессия', 'qa', 'qa']);
   assert.match(result, /создана/);
+  assert.match(result, /\[note-receipt operation=create .*fields=title,body,tags,folder/);
   const {notes} = await loadAll();
   const created = notes.find((n: {title: string}) => n.title === 'Отчёт');
   assert.equal(created.folderId, qa.id);
   assert.equal(created.body, 'Найден баг');
+  assert.deepEqual(created.tags, ['регрессия', 'qa']);
 });
 
 test('notesAppend: дописывает и не трогает остальное', async () => {
@@ -46,4 +48,13 @@ test('notesAppend: дописывает и не трогает остально�
   assert.equal(note.body, 'Купить гирлянду\n\nИ звезду');
   assert.equal(note.title, 'Новогодняя ёлка');
   assert.deepEqual(note.tags, ['дом']);
+});
+
+test('notesAppend: добавляет теги в поле tags, не меняя текст', async () => {
+  const result = await notesAppend(ёлка.id, undefined, ['#музыка', 'дом', 'рок']);
+  assert.match(result, /fields=tags/);
+  const {notes} = await loadAll();
+  const note = notes.find((n: {id: string}) => n.id === ёлка.id);
+  assert.equal(note.body, 'Купить гирлянду\n\nИ звезду');
+  assert.deepEqual(note.tags, ['дом', 'музыка', 'рок']);
 });

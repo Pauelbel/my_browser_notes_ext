@@ -38,6 +38,14 @@ export default async function ({openPage, base, server}) {
   await call('click', {ref: await refOf('button', 'Сохранить')});
   must((await questions()).at(-1)?.category === 'submit', 'отправка формы без вопроса');
 
+  await gate(['deny']);
+  const selectDenied = await call('set', {ref: await refOf('combobox', 'Тариф'), value: 'Платный'});
+  must(!selectDenied.ok && selectDenied.text.includes('USER_DECLINED') && (await questions()).at(-1)?.category === 'submit', `select без вопроса: ${selectDenied.text}`);
+
+  await gate(['deny']);
+  const reloadDenied = await call('navigate', {action: 'reload'});
+  must(!reloadDenied.ok && reloadDenied.text.includes('USER_DECLINED') && (await questions()).at(-1)?.category === 'submit', `reload без вопроса: ${reloadDenied.text}`);
+
   await gate([]);
   const enterNoRef = await call('press', {key: 'Enter'});
   must(!enterNoRef.ok, `Enter без ref должен требовать ref: ${enterNoRef.text}`);

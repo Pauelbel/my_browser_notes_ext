@@ -28,6 +28,8 @@ export interface ONode {
   /** Top of the box in page coordinates (child frames offset by their iframe). */
   y?: number;
   ref?: string;
+  /** Text fingerprint of the nearest repeated record, guarding refs in virtualized lists. */
+  recordContext?: string;
 }
 
 export const INTERACTIVE_ROLES = new Set([
@@ -206,5 +208,18 @@ export function buildOutline(capture: Capture): {roots: ONode[]; notices: string
     const children = buildFrame(frame, 0, ctx);
     if (children.length) roots.push({kind: 'element', role: 'Iframe', name: frame.url, states: [], children, interactive: false, frameId: frame.frameId, sessionId: frame.sessionId, loaderId: frame.loaderId});
   }
+  annotateRecordContexts(roots);
   return {roots, notices: ctx.notices};
+}
+
+const RECORD_ROLES = new Set(['row', 'listitem', 'article', 'treeitem']);
+const contextText = (node: ONode): string => cleanText([node.name, node.value ?? '', ...node.children.map(contextText)].join(' ')).slice(0, 240);
+
+/** A ref inside a list record must not silently follow a recycled DOM node into another record. */
+function annotateRecordContexts(nodes: ONode[], inherited = ''): void {
+  for (const node of nodes) {
+    const context = RECORD_ROLES.has(node.role) ? contextText(node) : inherited;
+    if (node.interactive && context) node.recordContext = context;
+    annotateRecordContexts(node.children, context);
+  }
 }

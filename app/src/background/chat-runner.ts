@@ -10,13 +10,15 @@ import {toModelMessages} from '../agent/history.ts';
 import {describeError} from '../llm/ollama.ts';
 import {buildChatTools, describeInput, type ReadTools} from '../agent/tools.ts';
 import {fitToContext} from '../agent/elision.ts';
-import {budgets} from '../agent/budgets.ts';
+import {budgets, measureContext} from '../agent/budgets.ts';
 import {UNFINISHED} from '../agent/history.ts';
 import {ScreenshotStore} from '../agent/screenshots.ts';
 import type {NotesApi} from '../agent/notes.ts';
 import type {Gate, PageTools} from '../page/index.ts';
 import {PromptBroker} from './prompts.ts';
 import {createAgentSession} from './agent-session.ts';
+import {isMutatingTool} from '../agent/tool-policy.ts';
+import {detectLocatorIntent, extractLocatorAnswer, locatorKindLabel} from '../agent/locator-intent.ts';
 
 /** The open tab's title and address after the user's latest message (sent to the model only, never stored). */
 function withOpenTab(messages: ModelMessage[], tab: {title?: string; url?: string} | null): ModelMessage[] {
@@ -52,11 +54,11 @@ export interface ChatDeps {
   heartbeat?: () => void;
   heartbeatMs?: number;
   /** Opens the page tools for a tab; without it the model gets no page tools. */
-  page?: (tabId: number) => Promise<PageHandle>;
+  page?: (tabId: number, ownerId?: string) => Promise<PageHandle>;
   /** The title and address of a tab, without attaching to it: Chat mode tells the model which page is open now. */
   currentTab?: (tabId: number) => Promise<{title?: string; url?: string}>;
   /** Agent mode: opens a tab's page tools with the gate of this reply. Without it there is no Agent mode. */
-  openTab?: (tabId: number, gate: Gate) => Promise<{tools: PageTools; release(): Promise<void>}>;
+  openTab?: (tabId: number, gate: Gate, ownerId?: string) => Promise<{tools: PageTools; release(): Promise<void>}>;
   tabsApi?: typeof chrome.tabs;
   tabGroupsApi?: typeof chrome.tabGroups;
   notes?: NotesApi;
@@ -66,7 +68,13 @@ export interface ChatDeps {
   /** The model's context window in tokens; 8192 when unknown. */
   contextTokens?: (settings: Settings) => Promise<number>;
   /** Where each chat's agent tabs are kept across worker restarts (chrome.storage.session in the worker). */
-  tabMemory?: {get(id: string): Promise<{members: number[]; groupId: number | null} | undefined>; set(id: string, m: {members: number[]; groupId: number | null}): Promise<void>};
+  tabMemory?: {get(id: string): Promise<{members: number[]; groupId: number | null} | undefined>; set(id: string, m: {members: number[]; groupId: number | null}): Promise<void>; delete?(id: string): Promise<void>};
+  /** Tabs on which each chat left highlights; session storage survives a service-worker restart. */
+  highlightMemory?: {get(id: string): Promise<number[] | undefined>; set(id: string, tabs: number[]): Promise<void>; delete?(id: string): Promise<void>};
+  /** Removes every assistant highlight from one tab without needing an active reply. */
+  clearHighlights?: (tabId: number, ownerId?: string) => Promise<void>;
+  /** Privacy-preserving counters only: tool name, success and normalized outcome/error code. */
+  recordMetric?: (name: ToolName, ok: boolean, summary: string) => void | Promise<void>;
 }
 
 interface Run {
@@ -86,6 +94,7 @@ export class ChatRunner {
   readonly #broker: PromptBroker;
   /** Each chat's agent tabs and tab group, so its next reply continues in them (kept while the worker lives). */
   readonly #tabMemory = new Map<string, {members: Set<number>; groupId: number | null}>();
+  readonly #highlightTabs = new Map<string, Set<number>>();
 
   constructor(deps: ChatDeps) {
     this.#deps = deps;
@@ -113,15 +122,56 @@ export class ChatRunner {
     this.#runs.get(conversationId)?.controller.abort();
   }
 
-  async delete(conversationId: string): Promise<void> {
+  async delete(conversationId: string, currentTabId?: number | null): Promise<void> {
     const run = this.#runs.get(conversationId);
     if (run) {
       run.deleted = true;
       run.controller.abort();
       await run.finished;
     }
+    await this.#clearConversationHighlights(conversationId, currentTabId);
+    await this.#deleteTabGroup(conversationId);
     await deleteConversation(conversationId);
     this.#deps.emit({type: 'deleted', conversationId});
+  }
+
+  async #rememberHighlights(conversationId: string, tabIds: number[]): Promise<void> {
+    let tabs = this.#highlightTabs.get(conversationId);
+    if (!tabs) {
+      tabs = new Set(await this.#deps.highlightMemory?.get(conversationId).catch(() => undefined) ?? []);
+      this.#highlightTabs.set(conversationId, tabs);
+    }
+    for (const id of tabIds) if (Number.isInteger(id) && id >= 0) tabs.add(id);
+    await this.#deps.highlightMemory?.set(conversationId, [...tabs]).catch(() => {});
+  }
+
+  async #clearConversationHighlights(conversationId: string, currentTabId?: number | null): Promise<void> {
+    const remembered = this.#highlightTabs.get(conversationId)
+      ?? new Set(await this.#deps.highlightMemory?.get(conversationId).catch(() => undefined) ?? []);
+    if (currentTabId !== null && currentTabId !== undefined) remembered.add(currentTabId);
+    const task = this.#tabMemory.get(conversationId)
+      ?? await this.#deps.tabMemory?.get(conversationId).then(m => m ? {members: new Set(m.members), groupId: m.groupId} : undefined).catch(() => undefined);
+    for (const id of task?.members ?? []) remembered.add(id);
+    if (this.#deps.clearHighlights) {
+      await Promise.all([...remembered].map(id => this.#deps.clearHighlights!(id, conversationId).catch(() => {})));
+    }
+    this.#highlightTabs.delete(conversationId);
+    await this.#deps.highlightMemory?.delete?.(conversationId).catch(() => {});
+  }
+
+  /** A task group belongs to its chat. Deleting the chat dissolves the group but keeps its tabs open. */
+  async #deleteTabGroup(conversationId: string): Promise<void> {
+    let memory = this.#tabMemory.get(conversationId);
+    if (!memory) {
+      const saved = await this.#deps.tabMemory?.get(conversationId).catch(() => undefined);
+      if (saved) memory = {members: new Set(saved.members), groupId: saved.groupId};
+    }
+    this.#tabMemory.delete(conversationId);
+    if (memory?.groupId !== null && memory?.groupId !== undefined && this.#deps.tabsApi) {
+      // Stale/closed tab ids are expected after a browser restart; ungroup independently so one cannot block others.
+      await Promise.all([...memory.members].map(id => this.#deps.tabsApi!.ungroup(id).catch(() => {})));
+    }
+    await this.#deps.tabMemory?.delete?.(conversationId).catch(() => {});
   }
 
   #setActive(delta: number): void {
@@ -157,6 +207,7 @@ export class ChatRunner {
   async #reply(command: SendCommand, text: string, run: Run, claim: (id: string) => void): Promise<string> {
     const now = this.#deps.now ?? Date.now;
     const settings = await this.#deps.settings();
+    const locatorKind = detectLocatorIntent(text);
     const profiles = await listProfiles();
     const profile = profiles.find(p => p.id === command.profileId) ?? profiles[0];
 
@@ -196,7 +247,7 @@ export class ChatRunner {
       const tabId = command.tabId;
       if (!this.#deps.page) return Promise.resolve(unavailable('Инструменты страницы недоступны.'));
       if (tabId === null || tabId === undefined) return Promise.resolve(unavailable('Нет открытой вкладки рядом с панелью.'));
-      handle ??= this.#deps.page(tabId);
+      handle ??= this.#deps.page(tabId, conversation.id);
       return handle.then(h => h.tools, error => unavailable(error instanceof Error ? error.message : String(error)));
     };
     const vision = (await this.#deps.capabilities?.(settings).catch(() => []) ?? []).includes('vision');
@@ -210,31 +261,40 @@ export class ChatRunner {
       this.#tabMemory.set(conversationId, {members: new Set(saved?.members ?? []), groupId: saved?.groupId ?? null});
     }
     const agent = agentMode ? createAgentSession({
-      tabId: command.tabId!, profile, conversation, settings, openTab: this.#deps.openTab!, tabsApi: this.#deps.tabsApi!, tabGroupsApi: this.#deps.tabGroupsApi,
+      tabId: command.tabId!, profile, conversation, settings, openTab: (tabId, gate) => this.#deps.openTab!(tabId, gate, conversation.id), tabsApi: this.#deps.tabsApi!, tabGroupsApi: this.#deps.tabGroupsApi,
       notes: this.#deps.notes, setSiteRule: this.#deps.setSiteRule ?? (async () => {}),
       readSettings: this.#deps.settings,
       readPermission: async () => (await getConversation(conversationId))?.permission ?? conversation.permission,
       memory: this.#tabMemory.get(conversationId) ?? (this.#tabMemory.set(conversationId, {members: new Set(), groupId: null}).get(conversationId)!),
       ask: prompt => this.#broker.ask({...prompt, conversationId}, run.controller.signal),
-      vision, screenshots,
+      vision, screenshots, locatorKind,
     }) : null;
-    const tools = agent ? agent.tools : this.#deps.page ? buildChatTools(profile, openPage, this.#deps.notes, {vision, screenshots}) : {};
+    const tools = agent ? agent.tools : this.#deps.page
+      ? buildChatTools(profile, openPage, this.#deps.notes, {vision, screenshots, locatorKind}) : {};
     const toolNames = Object.keys(tools) as ToolName[];
     // Chat mode: the page in the history may not be the one open now (the user moved on), so the model is told which is.
-    const openTab = !agent && this.#deps.page && this.#deps.currentTab && command.tabId !== null && command.tabId !== undefined
+    const openTab = this.#deps.currentTab && command.tabId !== null && command.tabId !== undefined
       ? await this.#deps.currentTab(command.tabId).catch(() => null) : null;
     let steps = 0;
     let doneSummary: string | null = null;
     let doneOutcome = 'success';
+    let verifiedLocatorAnswer: string | null = null;
+    let contextPlan: {system: string; historyBudget: number; tools: Record<string, {description?: string}>} | null = null;
     /** Text that comes after a tool call starts a new paragraph instead of running into the earlier text. */
     let afterTool = false;
     const emitStep = (step: ToolStep) => this.#deps.emit({type: 'step', conversationId: reply.conversationId, messageId: reply.id, step});
     try {
       const system = agent ? agentSystemPrompt(profile, toolNames) : systemPrompt(profile, toolNames);
       // One account of the window: what the system prompt and the tools take is not available to the history.
-      const budget = budgets({context, system, tools: tools as Record<string, {description?: string}>, agent: Boolean(agent)});
+      const toolDescriptions = tools as Record<string, {description?: string}>;
+      const budget = budgets({context, system, tools: toolDescriptions, agent: Boolean(agent)});
+      const requestMessages = withOpenTab(toModelMessages([...history, user], budget.history), openTab);
+      contextPlan = {system, historyBudget: budget.history, tools: toolDescriptions};
+      reply.context = measureContext({context, system, tools: toolDescriptions, messages: requestMessages});
+      this.#deps.emit({type: 'context', conversationId: reply.conversationId, messageId: reply.id, context: reply.context});
+      if (!run.deleted) await putMessage({...reply});
       const parts = this.#deps.stream({
-        settings, system, messages: withOpenTab(toModelMessages([...history, user], budget.history), openTab), signal: run.controller.signal, tools,
+        settings, system, messages: requestMessages, signal: run.controller.signal, tools,
         ...(agent
           ? {maxSteps: AGENT_MAX_STEPS, stopOnTool: 'done', prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}
           : {maxSteps: CHAT_MAX_STEPS, prepareMessages: <T>(m: T[]) => screenshots.inject(fitToContext(m, budget.run))}),
@@ -258,8 +318,21 @@ export class ChatRunner {
         if (part.type === 'tool-result') {
           const index = reply.steps!.findIndex(s => s.id === part.id);
           if (index >= 0) {
+            if (reply.steps![index].name === 'locator' && part.ok) {
+              verifiedLocatorAnswer = extractLocatorAnswer(part.value ?? part.summary) ?? verifiedLocatorAnswer;
+            }
             reply.steps![index] = {...reply.steps![index], status: part.ok ? 'done' : 'error', summary: part.summary};
+            if (reply.steps![index].name === 'done' && !part.ok) {
+              doneOutcome = 'partial';
+              doneSummary = `${doneSummary?.trim() ? `${doneSummary.trim()} ` : ''}Результат нельзя считать полностью подтверждённым: ${part.summary}`;
+            }
             emitStep(reply.steps![index]);
+            void this.#deps.recordMetric?.(reply.steps![index].name, part.ok, part.summary);
+            if (part.ok && reply.steps![index].name === 'highlight') {
+              const ids = agent ? [...(this.#tabMemory.get(conversationId)?.members ?? [])]
+                : command.tabId === null || command.tabId === undefined ? [] : [command.tabId];
+              await this.#rememberHighlights(conversationId, ids);
+            }
           }
           afterTool = true;
           // Steps are rare and saved every time, so a worker that stops mid-task leaves them with the interrupted reply.
@@ -267,6 +340,9 @@ export class ChatRunner {
           continue;
         }
         if (part.type === 'text') {
+          // Locator answers are security/integrity-sensitive: free model prose may invent extra selectors. The
+          // verified tool answer is installed below as one atomic final message instead.
+          if (locatorKind) continue;
           if (afterTool && reply.text.trim() && part.delta.trim()) reply.text = `${reply.text.trimEnd()}\n\n`;
           if (part.delta.trim()) afterTool = false;
           reply.text += part.delta;
@@ -291,6 +367,11 @@ export class ChatRunner {
           reply.text = `${reply.text.trim() ? `${reply.text.trim()}\n\n` : ''}Достигнут лимит шагов (${AGENT_MAX_STEPS}): задача выполнена не полностью.`;
         }
       }
+      if (locatorKind && reply.status === 'done') {
+        const requested = locatorKind === 'best' ? 'локатор' : locatorKindLabel(locatorKind);
+        reply.text = verifiedLocatorAnswer
+          ?? `Не удалось получить проверенный уникальный ${requested} для нужного элемента. Непроверенные варианты не выдаю.`;
+      }
     } catch (error) {
       if (run.controller.signal.aborted) reply.status = 'stopped';
       else { reply.status = 'failed'; reply.error = describeError(error, settings.ollamaUrl); }
@@ -304,7 +385,13 @@ export class ChatRunner {
     }
     // A step still running when the reply ended may or may not have happened: it is marked so.
     if (reply.steps?.some(s => s.status === 'running')) {
-      reply.steps = reply.steps.map(s => (s.status === 'running' ? {...s, status: 'error' as const, summary: UNFINISHED} : s));
+      reply.steps = reply.steps.map(s => s.status !== 'running' ? s : ({...s,
+        status: isMutatingTool(s.name) ? 'uncertain' as const : 'error' as const,
+        summary: isMutatingTool(s.name) ? 'результат действия неизвестен; сначала проверьте текущее состояние' : UNFINISHED}));
+    }
+    if (contextPlan) {
+      const messages = withOpenTab(toModelMessages([...history, user, reply], contextPlan.historyBudget), openTab);
+      reply.context = measureContext({context, system: contextPlan.system, tools: contextPlan.tools, messages});
     }
     if (!reply.steps!.length) delete reply.steps;
     await this.#finish(run, reply);

@@ -12,6 +12,7 @@ export interface RefRecord {
   role: string;
   name: string;
   proxy?: 'label';
+  recordContext?: string;
   stale?: boolean;
 }
 
@@ -32,13 +33,14 @@ export class RefRegistry {
     if (!record || record.stale) {
       record = {
         ref: `${this.epoch}${++this.#counter}`, frameId: node.frameId, sessionId: node.sessionId, backendNodeId: node.backendNodeId ?? -1,
-        loaderId: node.loaderId, role: node.role, name: node.name, proxy: node.proxy,
+        loaderId: node.loaderId, role: node.role, name: node.name, proxy: node.proxy, recordContext: node.recordContext,
       };
       this.#byKey.set(key, record);
       this.#byRef.set(record.ref, record);
     } else {
       record.role = node.role;
       record.name = node.name;
+      record.recordContext = node.recordContext;
     }
     node.ref = record.ref;
     return record.ref;
